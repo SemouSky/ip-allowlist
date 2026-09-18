@@ -4,9 +4,11 @@
     ".": {
       "release-type": "simple",
       "version-file": "version.txt",
-      "changelog-path": "CHANGELOG.md"
+      "changelog-path": "CHANGELOG.md",
+      "initial-version": "0.1.0",
+      "bump-minor-pre-major": true,
+      "pull-request-title-pattern": "chore: release ${version}"
     }
   },
-  "pull-request-title-pattern": "chore: release ${version}",
   "include-component-in-tag": false
 }

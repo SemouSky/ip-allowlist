@@ -21,7 +21,7 @@
 ## 快速安装
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SemouSky/ip-allowlist/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SemouSky/ip-allowlist/main/install.sh | sudo bash
 ```
 
 或手动安装：

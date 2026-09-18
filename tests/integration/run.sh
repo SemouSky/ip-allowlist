@@ -480,6 +480,17 @@ if [[ -x "$ROOT/install.sh" ]]; then
   installed_version="$(/usr/local/sbin/ip-allowlist version 2>&1 || true)"
   assert_contains "installed binary runs" "$installed_version" "ip-allowlist"
 
+  # Bootstrap mode: reading the installer from stdin leaves BASH_SOURCE unset;
+  # --from-dir keeps it offline while exercising that code path.
+  if bash -s -- --yes --from-dir "$ROOT" <"$ROOT/install.sh" >"$WS/install-piped.log" 2>&1; then
+    pass "piped install (--from-dir) exits 0"
+  else
+    fail "piped install (--from-dir) exits 0 (see $WS/install-piped.log)"
+    cat "$WS/install-piped.log" >&2
+  fi
+  piped_version="$(/usr/local/sbin/ip-allowlist version 2>&1 || true)"
+  assert_contains "piped install binary runs" "$piped_version" "ip-allowlist"
+
   if "$ROOT/uninstall.sh" --yes --purge >"$WS/uninstall.log" 2>&1; then
     pass "uninstall.sh exits 0"
   else

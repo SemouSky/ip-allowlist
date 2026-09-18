@@ -21,7 +21,7 @@ A Linux shell script that periodically fetches Cloudflare IP ranges (IPv4/IPv6) 
 ## Quick Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SemouSky/ip-allowlist/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SemouSky/ip-allowlist/main/install.sh | sudo bash
 ```
 
 Or manually:

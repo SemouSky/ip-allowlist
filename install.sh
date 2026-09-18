@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
-# ip-allowlist installer. Performs an atomic staged install/upgrade.
+# ip-allowlist installer.
+#
+# Two modes:
+#   1. Local: run from a checkout, i.e. this script sits next to ip-allowlist,
+#      lib/, config/, systemd/.
+#   2. Bootstrap: run when there is no local tree (for example
+#      `curl -fsSL .../install.sh | sudo bash`). The project archive is
+#      downloaded from the latest release (or the main branch as a fallback)
+#      and installed from a temporary directory.
+#
+# Offline installs can use --from-dir DIR or --from-tarball FILE.
 set -euo pipefail
 
+REPO="${IP_ALLOWLIST_REPO:-SemouSky/ip-allowlist}"
 PREFIX="/usr/local"
 CONFIG_DIR="/etc/ip-allowlist"
 SOURCES_DIR="$CONFIG_DIR/sources.d"
@@ -9,20 +20,44 @@ STATE_DIR="/var/lib/ip-allowlist"
 SYSTEMD_DIR="/etc/systemd/system"
 LOGROTATE_DIR="/etc/logrotate.d"
 
-for arg in "$@"; do
-  case "$arg" in
-    --yes|-y) ;;  # accepted for compatibility; install.sh never prompts
-    --prefix=*) PREFIX="${arg#*=}" ;;
-    -h|--help)
-      cat <<'EOF'
-Usage: install.sh [--yes] [--prefix=/usr/local]
+REQUEST_VERSION=""
+FROM_TARBALL=""
+FROM_DIR=""
 
-Installs ip-allowlist to the given prefix, installs default config,
-systemd units and logrotate configuration, then enables the timer.
+usage() {
+  cat <<'EOF'
+Usage: install.sh [options]
+
+Options:
+  --prefix=DIR        Install prefix (default: /usr/local)
+  --version VER       Install a specific release (default: latest release)
+  --from-dir DIR      Install from an unpacked project tree
+  --from-tarball FILE Install from a release tarball
+  --yes, -y           Accepted for compatibility (never prompts)
+  -h, --help          Show this help
+
+Bootstrap example:
+  curl -fsSL https://raw.githubusercontent.com/SemouSky/ip-allowlist/main/install.sh | sudo bash
 EOF
-      exit 0
-      ;;
-    *) echo "unknown argument: $arg" >&2; exit 64 ;;
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --yes|-y) shift ;;
+    --prefix)
+      shift; [[ $# -gt 0 ]] || { echo "--prefix requires a value" >&2; exit 64; }; PREFIX="$1"; shift ;;
+    --prefix=*) PREFIX="${1#*=}"; shift ;;
+    --version)
+      shift; [[ $# -gt 0 ]] || { echo "--version requires a value" >&2; exit 64; }; REQUEST_VERSION="$1"; shift ;;
+    --version=*) REQUEST_VERSION="${1#*=}"; shift ;;
+    --from-dir)
+      shift; [[ $# -gt 0 ]] || { echo "--from-dir requires a value" >&2; exit 64; }; FROM_DIR="$1"; shift ;;
+    --from-dir=*) FROM_DIR="${1#*=}"; shift ;;
+    --from-tarball)
+      shift; [[ $# -gt 0 ]] || { echo "--from-tarball requires a value" >&2; exit 64; }; FROM_TARBALL="$1"; shift ;;
+    --from-tarball=*) FROM_TARBALL="${1#*=}"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage >&2; exit 64 ;;
   esac
 done
 
@@ -36,16 +71,35 @@ die()  { printf '[install] ERROR: %s\n' "$*" >&2; exit 1; }
 
 require_root() {
   if [[ "$(id -u)" -ne 0 ]]; then
-    die "must be run as root (try: sudo $0)"
+    die "must be run as root (re-run with sudo)"
   fi
 }
 
-SCRIPT_DIR="$(cd -P "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# Locate this script's directory when running from a file. When piped through
+# bash, BASH_SOURCE is unset, so bootstrap mode is used instead.
+SELF="${BASH_SOURCE[0]:-}"
+SCRIPT_DIR=""
+if [[ -n "$SELF" && -f "$SELF" ]]; then
+  SCRIPT_DIR="$(cd -P "$(dirname -- "$SELF")" && pwd)"
+fi
+
+SRC_DIR=""
+WORK_DIR=""
+ARCHIVE=""
 STAGING=""
+
+cleanup() {
+  [[ -n "$STAGING" ]] && rm -rf -- "$STAGING"
+  [[ -n "$WORK_DIR" ]] && rm -rf -- "$WORK_DIR"
+  [[ -n "$ARCHIVE" ]] && rm -f -- "$ARCHIVE"
+  return 0
+}
+trap cleanup EXIT
 
 check_prereqs() {
   local missing=()
   command -v bash >/dev/null 2>&1 || missing+=("bash")
+  command -v tar >/dev/null 2>&1 || missing+=("tar")
   if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
     missing+=("curl or wget")
   fi
@@ -55,28 +109,124 @@ check_prereqs() {
   (( ${#missing[@]} == 0 )) || die "missing required commands: ${missing[*]}"
 }
 
+http_get() {
+  local url="$1"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --retry 3 --connect-timeout 15 "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O - --tries=3 --timeout=15 "$url"
+  else
+    die "neither curl nor wget is available"
+  fi
+}
+
+download() {
+  local url="$1" out="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --retry 3 --connect-timeout 15 -o "$out" "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "$out" --tries=3 --timeout=15 "$url"
+  else
+    die "neither curl nor wget is available"
+  fi
+}
+
+latest_version() {
+  local tag=""
+  tag="$(http_get "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
+    | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n1 \
+    | sed 's/.*"\([^"]*\)"$/\1/')" || true
+  printf '%s' "${tag#v}"
+}
+
+extract_archive() {
+  local archive="$1" top="" d
+  WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ip-allowlist-src.XXXXXX")"
+  tar -xzf "$archive" -C "$WORK_DIR" || die "failed to extract $archive"
+  for d in "$WORK_DIR"/*/; do
+    [[ -d "$d" ]] || continue
+    top="${d%/}"
+    break
+  done
+  [[ -n "$top" ]] || die "unexpected archive layout in $archive"
+  SRC_DIR="$top"
+}
+
+resolve_sources() {
+  if [[ -n "$FROM_DIR" ]]; then
+    [[ -f "$FROM_DIR/ip-allowlist" ]] || die "--from-dir is not an ip-allowlist tree: $FROM_DIR"
+    SRC_DIR="$(cd -P "$FROM_DIR" && pwd)"
+    return 0
+  fi
+  if [[ -n "$FROM_TARBALL" ]]; then
+    [[ -f "$FROM_TARBALL" ]] || die "tarball not found: $FROM_TARBALL"
+    extract_archive "$FROM_TARBALL"
+    return 0
+  fi
+  if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/ip-allowlist" && -f "$SCRIPT_DIR/lib/common.sh" ]]; then
+    SRC_DIR="$SCRIPT_DIR"
+    return 0
+  fi
+
+  local ver="$REQUEST_VERSION" url
+  if [[ -z "$ver" ]]; then
+    ver="$(latest_version)"
+  fi
+  if [[ -z "$ver" ]]; then
+    warn "no published release found; falling back to the main branch"
+    url="https://github.com/${REPO}/archive/refs/heads/main.tar.gz"
+  else
+    url="https://github.com/${REPO}/archive/refs/tags/v${ver#v}.tar.gz"
+  fi
+  log "downloading $url"
+  ARCHIVE="$(mktemp "${TMPDIR:-/tmp}/ip-allowlist.XXXXXX.tar.gz")"
+  download "$url" "$ARCHIVE" || die "download failed: $url"
+  extract_archive "$ARCHIVE"
+  rm -f -- "$ARCHIVE"
+  ARCHIVE=""
+  [[ -f "$SRC_DIR/ip-allowlist" ]] || die "downloaded archive is missing ip-allowlist"
+}
+
+syntax_check() {
+  local f
+  for f in \
+    "$SRC_DIR/ip-allowlist" \
+    "$SRC_DIR/lib/common.sh" \
+    "$SRC_DIR/lib/source.sh" \
+    "$SRC_DIR/lib/state.sh" \
+    "$SRC_DIR/lib/fail2ban.sh" \
+    "$SRC_DIR/lib/firewall/nft.sh" \
+    "$SRC_DIR/lib/firewall/ufw.sh" \
+    "$SRC_DIR/lib/firewall/firewalld.sh" \
+    "$SRC_DIR/install.sh" \
+    "$SRC_DIR/uninstall.sh"; do
+    [[ -f "$f" ]] || die "missing expected file: $f"
+    bash -n "$f" || die "syntax error in $f"
+  done
+}
+
 stage_files() {
   local staging="$1"
   mkdir -p "$staging"
   install -d -m 0755 "$staging/lib" "$staging/lib/firewall"
 
-  install -m 0755 "$SCRIPT_DIR/ip-allowlist" "$staging/ip-allowlist"
-  install -m 0644 "$SCRIPT_DIR/lib/common.sh"   "$staging/lib/common.sh"
-  install -m 0644 "$SCRIPT_DIR/lib/source.sh"   "$staging/lib/source.sh"
-  install -m 0644 "$SCRIPT_DIR/lib/state.sh"    "$staging/lib/state.sh"
-  install -m 0644 "$SCRIPT_DIR/lib/fail2ban.sh" "$staging/lib/fail2ban.sh"
-  install -m 0644 "$SCRIPT_DIR/lib/firewall/nft.sh" "$staging/lib/firewall/nft.sh"
-  install -m 0644 "$SCRIPT_DIR/lib/firewall/ufw.sh" "$staging/lib/firewall/ufw.sh"
-  install -m 0644 "$SCRIPT_DIR/lib/firewall/firewalld.sh" "$staging/lib/firewall/firewalld.sh"
+  install -m 0755 "$SRC_DIR/ip-allowlist" "$staging/ip-allowlist"
+  install -m 0644 "$SRC_DIR/lib/common.sh"   "$staging/lib/common.sh"
+  install -m 0644 "$SRC_DIR/lib/source.sh"   "$staging/lib/source.sh"
+  install -m 0644 "$SRC_DIR/lib/state.sh"    "$staging/lib/state.sh"
+  install -m 0644 "$SRC_DIR/lib/fail2ban.sh" "$staging/lib/fail2ban.sh"
+  install -m 0644 "$SRC_DIR/lib/firewall/nft.sh" "$staging/lib/firewall/nft.sh"
+  install -m 0644 "$SRC_DIR/lib/firewall/ufw.sh" "$staging/lib/firewall/ufw.sh"
+  install -m 0644 "$SRC_DIR/lib/firewall/firewalld.sh" "$staging/lib/firewall/firewalld.sh"
 
-  if [[ -f "$SCRIPT_DIR/version.txt" ]]; then
-    install -m 0644 "$SCRIPT_DIR/version.txt" "$staging/version.txt"
+  if [[ -f "$SRC_DIR/version.txt" ]]; then
+    install -m 0644 "$SRC_DIR/version.txt" "$staging/version.txt"
   else
     printf '0.0.0\n' >"$staging/version.txt"
   fi
 
-  install -m 0755 "$SCRIPT_DIR/install.sh"   "$staging/install.sh"
-  install -m 0755 "$SCRIPT_DIR/uninstall.sh" "$staging/uninstall.sh"
+  install -m 0755 "$SRC_DIR/install.sh"   "$staging/install.sh"
+  install -m 0755 "$SRC_DIR/uninstall.sh" "$staging/uninstall.sh"
 }
 
 atomic_swap_dir() {
@@ -103,8 +253,8 @@ install_binary() {
 install_config() {
   install -d -m 0750 "$CONFIG_DIR" "$SOURCES_DIR"
   if [[ ! -f "$CONFIG_DIR/config.conf" ]]; then
-    if [[ -f "$SCRIPT_DIR/config/config.conf.example" ]]; then
-      install -m 0640 "$SCRIPT_DIR/config/config.conf.example" "$CONFIG_DIR/config.conf"
+    if [[ -f "$SRC_DIR/config/config.conf.example" ]]; then
+      install -m 0640 "$SRC_DIR/config/config.conf.example" "$CONFIG_DIR/config.conf"
       log "installed default config: $CONFIG_DIR/config.conf"
     else
       warn "config template not found; create $CONFIG_DIR/config.conf manually"
@@ -112,8 +262,8 @@ install_config() {
   else
     log "existing config preserved: $CONFIG_DIR/config.conf"
   fi
-  if [[ ! -f "$SOURCES_DIR/cloudflare.conf" && -f "$SCRIPT_DIR/sources.d/cloudflare.conf.example" ]]; then
-    install -m 0640 "$SCRIPT_DIR/sources.d/cloudflare.conf.example" "$SOURCES_DIR/cloudflare.conf"
+  if [[ ! -f "$SOURCES_DIR/cloudflare.conf" && -f "$SRC_DIR/sources.d/cloudflare.conf.example" ]]; then
+    install -m 0640 "$SRC_DIR/sources.d/cloudflare.conf.example" "$SOURCES_DIR/cloudflare.conf"
     log "installed default source: $SOURCES_DIR/cloudflare.conf"
   fi
 }
@@ -123,14 +273,14 @@ install_systemd() {
     warn "systemctl not found; skipping systemd unit installation"
     return 0
   fi
-  if [[ ! -f "$SCRIPT_DIR/systemd/ip-allowlist.service" ]]; then
+  if [[ ! -f "$SRC_DIR/systemd/ip-allowlist.service" ]]; then
     warn "systemd unit files not found; skipping"
     return 0
   fi
   install -d -m 0755 "$SYSTEMD_DIR"
-  install -m 0644 "$SCRIPT_DIR/systemd/ip-allowlist.service" "$SYSTEMD_DIR/ip-allowlist.service"
-  install -m 0644 "$SCRIPT_DIR/systemd/ip-allowlist.timer"   "$SYSTEMD_DIR/ip-allowlist.timer"
-  install -m 0644 "$SCRIPT_DIR/systemd/ip-allowlist-boot.service" "$SYSTEMD_DIR/ip-allowlist-boot.service"
+  install -m 0644 "$SRC_DIR/systemd/ip-allowlist.service" "$SYSTEMD_DIR/ip-allowlist.service"
+  install -m 0644 "$SRC_DIR/systemd/ip-allowlist.timer"   "$SYSTEMD_DIR/ip-allowlist.timer"
+  install -m 0644 "$SRC_DIR/systemd/ip-allowlist-boot.service" "$SYSTEMD_DIR/ip-allowlist-boot.service"
 
   # Honour update_on_boot from the installed config.
   if grep -qiE '^[[:space:]]*update_on_boot[[:space:]]*=[[:space:]]*(true|1|yes|on)' "$CONFIG_DIR/config.conf" 2>/dev/null; then
@@ -169,12 +319,12 @@ install_state_dir() {
 main() {
   require_root
   check_prereqs
+  resolve_sources
+  syntax_check
 
-  log "installing ip-allowlist from $SCRIPT_DIR"
+  log "installing ip-allowlist from $SRC_DIR"
 
   STAGING="$(mktemp -d "${TMPDIR:-/tmp}/ip-allowlist-stage.XXXXXX")"
-  trap 'rm -rf -- "${STAGING:-}"' EXIT
-
   stage_files "$STAGING"
   atomic_swap_dir "$STAGING" "$INSTALL_LIB"
   STAGING=""

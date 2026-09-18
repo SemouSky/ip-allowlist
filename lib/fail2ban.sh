@@ -161,6 +161,18 @@ fail2ban_dropin_present() {
 fail2ban_apply() {
   local state_dir="$1" dropin="$2"
 
+  local dropin_dir
+  dropin_dir=$(dirname -- "$dropin")
+  if [[ ! -d "$dropin_dir" ]]; then
+    log_warn "fail2ban: $dropin_dir does not exist; skipping drop-in (is fail2ban installed?)"
+    return 0
+  fi
+  if ! ( : >"$dropin_dir/.ip-allowlist.wtest" ) 2>/dev/null; then
+    log_warn "fail2ban: $dropin_dir is not writable; skipping drop-in"
+    return 0
+  fi
+  rm -f -- "$dropin_dir/.ip-allowlist.wtest"
+
   local union
   union="$state_dir/fail2ban/union.ips"
   mkdir -p -- "$state_dir/fail2ban"

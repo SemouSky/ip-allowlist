@@ -46,9 +46,10 @@ model. This document details the implementation-level controls.
   - state dir `0700` root:root
   - log file created via logrotate as `0640` root:root
 - The systemd unit uses `ProtectSystem=strict`, `ProtectHome=true`,
-  `PrivateTmp=true`, `NoNewPrivileges=true`, and a minimal capability set
-  (`CAP_NET_ADMIN`, `CAP_DAC_OVERRIDE`), with `ReadWritePaths` limited to the
-  state dir, log file, and `/etc/fail2ban`.
+  `PrivateTmp=true`, `NoNewPrivileges=true`, `StateDirectory=ip-allowlist`, and
+  a minimal capability set (`CAP_NET_ADMIN`, `CAP_NET_RAW`, `CAP_DAC_OVERRIDE`);
+  `ReadWritePaths` uses `-` prefixed entries so missing paths (a not-yet-created
+  log file, an absent `/etc/fail2ban`) do not abort namespace setup.
 
 ## fail2ban
 

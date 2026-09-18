@@ -316,6 +316,14 @@ install_state_dir() {
   install -d -m 0700 "$STATE_DIR"
 }
 
+install_log_file() {
+  local log="/var/log/ip-allowlist.log"
+  [[ -d /var/log ]] || return 0
+  touch "$log" 2>/dev/null || return 0
+  chmod 0640 "$log" 2>/dev/null || true
+  log "prepared log file $log"
+}
+
 main() {
   require_root
   check_prereqs
@@ -330,6 +338,7 @@ main() {
   STAGING=""
   install_binary
   install_state_dir
+  install_log_file
   install_config
   install_systemd
   install_logrotate

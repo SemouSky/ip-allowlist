@@ -36,7 +36,7 @@
   - 配置 `0640` root:root
   - 状态目录 `0700` root:root
   - 日志文件由 logrotate 创建为 `0640` root:root
-- systemd 单元使用 `ProtectSystem=strict`、`ProtectHome=true`、`PrivateTmp=true`、`NoNewPrivileges=true`，以及最小能力集（`CAP_NET_ADMIN`、`CAP_DAC_OVERRIDE`）；`ReadWritePaths` 仅限状态目录、日志文件与 `/etc/fail2ban`。
+- systemd 单元使用 `ProtectSystem=strict`、`ProtectHome=true`、`PrivateTmp=true`、`NoNewPrivileges=true`、`StateDirectory=ip-allowlist`，以及最小能力集（`CAP_NET_ADMIN`、`CAP_NET_RAW`、`CAP_DAC_OVERRIDE`）；`ReadWritePaths` 使用 `-` 前缀，因此路径缺失（日志文件尚未创建、未安装 `/etc/fail2ban`）不会导致命名空间建立失败。
 
 ## fail2ban
 

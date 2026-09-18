@@ -15,9 +15,11 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 NoNewPrivileges=true
-ReadWritePaths=/var/lib/ip-allowlist /var/log/ip-allowlist.log /etc/fail2ban
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_OVERRIDE
-AmbientCapabilities=CAP_NET_ADMIN CAP_DAC_OVERRIDE
+StateDirectory=ip-allowlist
+StateDirectoryMode=0700
+# "-" makes systemd ignore these paths when they do not exist yet.
+ReadWritePaths=-/var/log/ip-allowlist.log -/etc/fail2ban
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_OVERRIDE
 RemainAfterExit=no
 
 [Install]

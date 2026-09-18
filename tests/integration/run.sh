@@ -321,6 +321,26 @@ else
   fail "empty union removes drop-in"
 fi
 
+# fail2ban enabled but its drop-in directory missing: warn and skip, keep exit 0
+cat >"$CONF" <<EOF
+firewall_backend=nft
+firewall_table_family=inet
+fail2ban_enabled=true
+fail2ban_ignoreip_file=$WS/no-such-fail2ban-dir/ip-allowlist.conf
+paths.state_dir=$STATE
+paths.sources_dir=$SOURCES
+paths.log_file=$WS/log.txt
+logging.level=debug
+logging.target=stdout
+update_interval=0
+EOF
+if "$CLI" --config "$CONF" sync >"$WS/out-missing-f2b" 2>&1; then
+  pass "missing fail2ban directory does not fail sync"
+else
+  fail "missing fail2ban directory does not fail sync (see $WS/out-missing-f2b)"
+fi
+assert_contains "missing fail2ban directory is reported" "$(cat "$WS/out-missing-f2b")" "does not exist"
+
 # ---------------------------------------------------------------------------
 # 10. version command
 # ---------------------------------------------------------------------------

@@ -1,0 +1,25 @@
+# Build artifacts
+dist/
+*.tar.gz
+
+# Local config (never commit real config/state)
+config/config.conf
+sources.d/*.conf
+!sources.d/*.conf.example
+!config/*.conf.example
+
+# Local agent/tooling state (plans, worktrees, UI state)
+.kilo/
+
+# Editor
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Test scratch
+/tmp/
+*.log

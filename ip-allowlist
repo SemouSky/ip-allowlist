@@ -1,0 +1,997 @@
+#!/usr/bin/env bash
+# ip-allowlist: manage firewall allow-lists from Cloudflare and other sources.
+#
+# This is the main entry point. Backend/library code lives in lib/.
+#
+# Exit codes:
+#   0 success / OK
+#   1 warning (status --check)
+#   2 critical / operational failure (status --check)
+#   3 unknown (status --check)
+#   >3 fatal error
+
+set -uo pipefail
+
+# ---------------------------------------------------------------------------
+# Self-location
+# ---------------------------------------------------------------------------
+
+resolve_script_dir() {
+  local src="${BASH_SOURCE[0]}"
+  local dir
+  while [[ -L "$src" ]]; do
+    dir=$(cd -P "$(dirname -- "$src")" && pwd)
+    src=$(readlink -- "$src")
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+  cd -P "$(dirname -- "$src")" && pwd
+}
+
+IP_ALLOWLIST_ROOT="$(resolve_script_dir)"
+export IP_ALLOWLIST_ROOT
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+
+COMMAND=""
+CONFIG_FILE=""
+JSON_OUT=0
+FORCE=0
+PURGE=0
+STATUS_CHECK=0
+UPGRADE_CHECK=0
+ASSUME_YES=0
+LOG_LEVEL_CLI=0
+
+usage() {
+  cat <<'EOF'
+ip-allowlist - manage firewall allow-lists from Cloudflare and other sources
+
+Usage: ip-allowlist [command] [options]
+
+Commands:
+  sync (default)   Fetch sources and apply allow-lists
+  check            Fetch sources and report changes without applying
+  apply-offline    Apply allow-lists from cached state (no network)
+  sources          List configured sources
+  status           Show current status (--check for Nagios format)
+  cleanup          Remove all ip-allowlist firewall objects and fail2ban drop-in
+  version          Show version information
+  upgrade          Check for and install updates
+  install          Install ip-allowlist system-wide
+  uninstall        Remove ip-allowlist (--purge to remove data)
+  help             Show this help
+
+Options:
+  --config FILE    Use alternative config file
+  --json           JSON output (sources, status)
+  --verbose        Enable debug logging
+  --quiet          Only warnings and errors
+  --dry-run        Show what would change without applying
+  --force          Ignore update intervals
+  --check          Nagios-style status check (status) or check-only (upgrade)
+  --purge          Remove data/state on uninstall
+  --yes            Assume yes for prompts
+  --version        Show version
+  -h, --help       Show this help
+
+Environment:
+  IP_ALLOWLIST_CONFIG   Alternative config file path
+  LOG_LEVEL             Override logging level (debug|info|warn|error)
+EOF
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      sync|check|apply-offline|sources|status|cleanup|version|upgrade|install|uninstall|help)
+        COMMAND="$1"
+        ;;
+      --config)
+        shift
+        [[ $# -gt 0 ]] || { err "--config requires an argument"; exit 64; }
+        CONFIG_FILE="$1"
+        ;;
+      --config=*)
+        CONFIG_FILE="${1#*=}"
+        ;;
+      --json) JSON_OUT=1 ;;
+      --verbose|-v) LOG_LEVEL="$LOG_LEVEL_DEBUG"; LOG_LEVEL_CLI=1 ;;
+      --quiet|-q) QUIET=1; LOG_LEVEL="$LOG_LEVEL_WARN"; LOG_LEVEL_CLI=1 ;;
+      --dry-run) DRY_RUN=1 ;;
+      --force) FORCE=1 ;;
+      --check) STATUS_CHECK=1; UPGRADE_CHECK=1 ;;
+      --purge) PURGE=1 ;;
+      --yes|-y) ASSUME_YES=1 ;;
+      --version) COMMAND="version" ;;
+      -h|--help) COMMAND="help" ;;
+      *)
+        err "unknown argument: $1"
+        usage >&2
+        exit 64
+        ;;
+    esac
+    shift
+  done
+
+  [[ -n "$COMMAND" ]] || COMMAND="sync"
+}
+
+# ---------------------------------------------------------------------------
+# Libraries
+# ---------------------------------------------------------------------------
+
+load_libraries() {
+  local lib="$IP_ALLOWLIST_ROOT/lib"
+  # shellcheck source=/dev/null
+  source "$lib/common.sh"
+  # shellcheck source=/dev/null
+  source "$lib/source.sh"
+  # shellcheck source=/dev/null
+  source "$lib/state.sh"
+  # shellcheck source=/dev/null
+  source "$lib/fail2ban.sh"
+
+  IP_ALLOWLIST_VERSION="$(read_version)"
+}
+
+# Single source of truth for the supported firewall backends.
+is_valid_backend() {
+  case "$1" in
+    nft|ufw|firewalld) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+load_backend() {
+  local backend="$1"
+  is_valid_backend "$backend" || die "invalid firewall_backend '$backend' (expected nft, ufw or firewalld)"
+  local file="$IP_ALLOWLIST_ROOT/lib/firewall/${backend}.sh"
+  [[ -f "$file" ]] || die "firewall backend implementation not found: $file"
+  # shellcheck source=/dev/null
+  source "$file"
+
+  case "$backend" in
+    nft)
+      NFT_TABLE="$FIREWALL_CHAIN_NAME"
+      NFT_FAMILY="$FIREWALL_TABLE_FAMILY"
+      ;;
+    firewalld)
+      FIREWALLD_ZONE="$FIREWALL_FIREWALLD_ZONE"
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+declare -A MAIN=()
+# Highest config schema version this build understands.
+readonly CONFIG_SCHEMA_VERSION=1
+CONFIG_BASE_DIR=""
+STATE_DIR=""
+SOURCES_DIR=""
+BACKEND=""
+FIREWALL_CHAIN_NAME="ip-allowlist"
+FIREWALL_TABLE_FAMILY="inet"
+FIREWALL_FIREWALLD_ZONE=""
+FAIL2BAN_ENABLED="true"
+FAIL2BAN_DROPIN="/etc/fail2ban/ip-allowlist.conf"
+UPDATE_INTERVAL=900
+
+locate_config() {
+  if [[ -n "$CONFIG_FILE" ]]; then
+    printf '%s' "$CONFIG_FILE"
+    return 0
+  fi
+  if [[ -n "${IP_ALLOWLIST_CONFIG:-}" ]]; then
+    printf '%s' "$IP_ALLOWLIST_CONFIG"
+    return 0
+  fi
+  if [[ -f /etc/ip-allowlist/config.conf ]]; then
+    printf '%s' "/etc/ip-allowlist/config.conf"
+    return 0
+  fi
+  if [[ -f "$IP_ALLOWLIST_ROOT/config/config.conf" ]]; then
+    printf '%s' "$IP_ALLOWLIST_ROOT/config/config.conf"
+    return 0
+  fi
+  printf '%s' ""
+}
+
+load_main_config() {
+  local file
+  file=$(locate_config)
+  if [[ -z "$file" ]]; then
+    die "no config file found (looked for /etc/ip-allowlist/config.conf). Run: ip-allowlist install"
+  fi
+  [[ -f "$file" ]] || die "config file not found: $file"
+  CONFIG_FILE="$file"
+  CONFIG_BASE_DIR=$(cd -P "$(dirname -- "$file")" && pwd)
+
+  kv_load_file MAIN "$file"
+
+  BACKEND="${MAIN[firewall_backend]:-}"
+  [[ -n "$BACKEND" ]] || die "config: firewall_backend is required (nft|ufw|firewalld)"
+  is_valid_backend "$BACKEND" || die "config: invalid firewall_backend '$BACKEND'"
+
+  FIREWALL_CHAIN_NAME="${MAIN[firewall_chain_name]:-ip-allowlist}"
+  FIREWALL_TABLE_FAMILY="${MAIN[firewall_table_family]:-inet}"
+  case "$FIREWALL_TABLE_FAMILY" in
+    inet|ip|ip6) ;;
+    *) die "config: invalid firewall_table_family '$FIREWALL_TABLE_FAMILY'" ;;
+  esac
+  [[ "$FIREWALL_CHAIN_NAME" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] \
+    || die "config: invalid firewall_chain_name '$FIREWALL_CHAIN_NAME'"
+
+  FIREWALL_FIREWALLD_ZONE="${MAIN[firewall_firewalld_zone]:-}"
+  if [[ -n "$FIREWALL_FIREWALLD_ZONE" ]]; then
+    [[ "$FIREWALL_FIREWALLD_ZONE" =~ ^[A-Za-z0-9_-]+$ ]] \
+      || die "config: invalid firewall_firewalld_zone '$FIREWALL_FIREWALLD_ZONE'"
+  fi
+
+  FAIL2BAN_ENABLED=$(normalize_bool "${MAIN[fail2ban_enabled]:-true}")
+  FAIL2BAN_DROPIN="${MAIN[fail2ban_ignoreip_file]:-/etc/fail2ban/ip-allowlist.conf}"
+
+  local state_dir="${MAIN[paths.state_dir]:-/var/lib/ip-allowlist}"
+  local sources_dir="${MAIN[paths.sources_dir]:-/etc/ip-allowlist/sources.d}"
+  STATE_DIR=$(resolve_path "$CONFIG_BASE_DIR" "$state_dir")
+  SOURCES_DIR=$(resolve_path "$CONFIG_BASE_DIR" "$sources_dir")
+  path_has_no_spaces "$STATE_DIR" || die "config: paths.state_dir must not contain spaces"
+  path_has_no_spaces "$SOURCES_DIR" || die "config: paths.sources_dir must not contain spaces"
+
+  local log_file="${MAIN[paths.log_file]:-/var/log/ip-allowlist.log}"
+  LOG_FILE=$(resolve_path "$CONFIG_BASE_DIR" "$log_file")
+
+  LOG_TARGET="${MAIN[logging.target]:-auto}"
+  LOG_FORMAT="${MAIN[logging.format]:-text}"
+  local cfg_level="${MAIN[logging.level]:-info}"
+  # Command-line --verbose/--quiet take precedence over config.
+  if (( LOG_LEVEL_CLI == 0 )); then
+    LOG_LEVEL=$(log_level_value "$cfg_level")
+  fi
+
+  if [[ -n "${MAIN[update_interval]:-}" ]]; then
+    is_uint "${MAIN[update_interval]}" || die "config: update_interval must be an integer"
+    UPDATE_INTERVAL="${MAIN[update_interval]}"
+  fi
+
+  # Validate logging config
+  case "$LOG_TARGET" in auto|stdout|file|syslog) ;; *) die "config: invalid logging.target '$LOG_TARGET'" ;; esac
+  case "$LOG_FORMAT" in text|json) ;; *) die "config: invalid logging.format '$LOG_FORMAT'" ;; esac
+
+  validate_schema_version
+}
+
+# Apply config schema migrations and reject configs from newer versions.
+migrate_config() {
+  local from="$1" to="$2"
+  # No migrations are defined yet; future versions add steps here, for example:
+  #   if (( from < 2 )); then MAIN[new_key]="${MAIN[new_key]:-default}"; fi
+  log_debug "config: no migrations required from schema $from to $to"
+}
+
+validate_schema_version() {
+  local declared="${MAIN[schema_version]:-$CONFIG_SCHEMA_VERSION}"
+  if ! is_uint "$declared"; then
+    die "config: schema_version must be a non-negative integer (got '$declared')"
+  fi
+  if (( declared > CONFIG_SCHEMA_VERSION )); then
+    die "config: schema_version $declared is newer than supported $CONFIG_SCHEMA_VERSION; upgrade ip-allowlist"
+  fi
+  if (( declared < CONFIG_SCHEMA_VERSION )); then
+    log_warn "config: schema_version $declared is older than $CONFIG_SCHEMA_VERSION; applying migrations"
+    migrate_config "$declared" "$CONFIG_SCHEMA_VERSION"
+  fi
+}
+
+setup_logging() {
+  RUN_ID="$(date +%s)-$$"
+  case "$LOG_TARGET" in
+    file)
+      mkdir -p -- "$(dirname -- "$LOG_FILE")" 2>/dev/null || true
+      if ! touch "$LOG_FILE" 2>/dev/null; then
+        err "WARN: cannot write log file $LOG_FILE, falling back to stdout"
+        LOG_TARGET="stdout"
+        LOG_FILE=""
+      fi
+      ;;
+    auto)
+      if [[ ! -t 1 && -n "$LOG_FILE" ]]; then
+        mkdir -p -- "$(dirname -- "$LOG_FILE")" 2>/dev/null || true
+        touch "$LOG_FILE" 2>/dev/null || LOG_FILE=""
+      fi
+      ;;
+    syslog)
+      if ! have logger; then
+        err "WARN: logging.target=syslog but 'logger' is not available, falling back to stdout"
+        LOG_TARGET="stdout"
+      fi
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Conflict detection
+# ---------------------------------------------------------------------------
+
+ufw_active() {
+  have ufw || return 1
+  ufw status 2>/dev/null | grep -qi '^Status:[[:space:]]*active'
+}
+
+firewalld_active() {
+  have firewall-cmd || return 1
+  firewall-cmd --state >/dev/null 2>&1
+}
+
+# Reject mismatched active firewall managers.
+firewall_check_conflicts() {
+  local configured="$1"
+  local u=0 f=0
+  ufw_active && u=1
+  firewalld_active && f=1
+
+  if (( u == 1 && f == 1 )); then
+    die "both ufw and firewalld are active; disable one before using ip-allowlist"
+  fi
+  if (( u == 1 )) && [[ "$configured" != "ufw" ]]; then
+    die "ufw is active but firewall_backend=$configured; set firewall_backend=ufw or disable ufw"
+  fi
+  if (( f == 1 )) && [[ "$configured" != "firewalld" ]]; then
+    die "firewalld is active but firewall_backend=$configured; set firewall_backend=firewalld or disable firewalld"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Backend dispatch
+#
+# Backend validity is centralized in is_valid_backend(); these dispatchers only
+# select behaviour for a backend that has already been validated.
+# ---------------------------------------------------------------------------
+
+backend_validate() {
+  case "$BACKEND" in
+    nft) nft_validate ;;
+    ufw) ufw_validate ;;
+    firewalld) firewalld_validate ;;
+  esac
+}
+
+backend_apply() {
+  case "$BACKEND" in
+    nft) nft_apply "$STATE_DIR" ;;
+    ufw) ufw_apply "$STATE_DIR" ;;
+    firewalld) firewalld_apply "$STATE_DIR" ;;
+  esac
+}
+
+backend_snapshot() {
+  local out="$1"
+  case "$BACKEND" in
+    nft) nft_snapshot "$out" ;;
+    ufw) ufw_snapshot "$out" ;;
+    firewalld) firewalld_snapshot "$out" ;;
+  esac
+}
+
+backend_cleanup() {
+  case "$BACKEND" in
+    nft) nft_cleanup ;;
+    ufw) ufw_cleanup ;;
+    firewalld) firewalld_cleanup ;;
+  esac
+}
+
+backend_status() {
+  case "$BACKEND" in
+    nft) nft_status ;;
+    ufw) ufw_status ;;
+    firewalld) firewalld_status ;;
+  esac
+}
+
+# Remove artifacts belonging to a backend we are switching away from.
+# Runs in a subshell so sourcing the old backend cannot clobber the current one.
+# Usage: cleanup_previous_backend <backend> <firewalld_zone>
+cleanup_previous_backend() {
+  local backend="$1" zone="$2"
+  [[ -n "$backend" ]] || return 0
+  is_valid_backend "$backend" || return 0
+  [[ "$backend" == "$BACKEND" ]] && return 0
+  log_info "removing objects left by previous backend: $backend"
+  case "$backend" in
+    nft)
+      (
+        # shellcheck source=/dev/null
+        source "$IP_ALLOWLIST_ROOT/lib/firewall/nft.sh"
+        NFT_TABLE="$FIREWALL_CHAIN_NAME"
+        NFT_FAMILY="$FIREWALL_TABLE_FAMILY"
+        nft_cleanup
+      )
+      ;;
+    ufw)
+      (
+        # shellcheck source=/dev/null
+        source "$IP_ALLOWLIST_ROOT/lib/firewall/ufw.sh"
+        ufw_cleanup
+      )
+      ;;
+    firewalld)
+      (
+        # shellcheck source=/dev/null
+        source "$IP_ALLOWLIST_ROOT/lib/firewall/firewalld.sh"
+        FIREWALLD_ZONE="$zone"
+        firewalld_cleanup
+      )
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Source loading
+# ---------------------------------------------------------------------------
+
+declare -A SOURCES=()
+declare -A SOURCE_SAFE_NAMES=()
+SOURCE_NAMES=()
+
+load_sources() {
+  SOURCES=()
+  SOURCE_SAFE_NAMES=()
+  SOURCE_NAMES=()
+  local f
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    local -A s=()
+    source_load_config s "$f"
+    local name="${s[name]}"
+    if [[ -n "${SOURCES[$name]:-}" ]]; then
+      die "duplicate source name '$name' (in $f and ${SOURCES[$name]})"
+    fi
+    # Firewall object names collapse '-' and '_' to '_', so guard against
+    # two distinct source names producing the same set/chain object.
+    local safe="${name//-/_}"
+    if [[ -n "${SOURCE_SAFE_NAMES[$safe]:-}" ]]; then
+      die "source '$name' collides with '${SOURCE_SAFE_NAMES[$safe]}' after firewall object naming (dashes and underscores are equivalent); rename one source"
+    fi
+    SOURCE_SAFE_NAMES["$safe"]="$name"
+    SOURCES["$name"]="$f"
+    SOURCE_NAMES+=("$name")
+    # Stash parsed config in a per-name associative array via dynamic scope.
+    declare -gA "SRC_${safe}=()"
+    local -n ref="SRC_${safe}"
+    local k
+    for k in "${!s[@]}"; do
+      ref["$k"]="${s[$k]}"
+    done
+  done < <(source_list_files "$SOURCES_DIR")
+}
+
+source_ref() {
+  local name="$1"
+  printf 'SRC_%s' "${name//-/_}"
+}
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+cmd_version() {
+  if (( JSON_OUT == 1 )); then
+    printf '{"name":"ip-allowlist","version":"%s"}\n' "$IP_ALLOWLIST_VERSION"
+  else
+    printf 'ip-allowlist %s\n' "$IP_ALLOWLIST_VERSION"
+  fi
+}
+
+cmd_sync() {
+  firewall_check_conflicts "$BACKEND"
+  backend_validate
+  state_init "$STATE_DIR"
+
+  # Capture what the previous run recorded before any state is overwritten.
+  local prev_backend prev_firewalld_zone prev_dropin
+  prev_backend=$(state_get_key "backend")
+  prev_firewalld_zone=$(state_get_key "firewall.firewalld-zone")
+  prev_dropin=$(state_get_key "fail2ban.ignoreip-file")
+
+  lock_acquire "$STATE_DIR/.lock"
+
+  if state_in_progress; then
+    log_warn "previous run did not complete; recovering from last known-good state"
+    local rname
+    for rname in "${SOURCE_NAMES[@]}"; do
+      if [[ ! -f "$STATE_DIR/current/${rname}.ips" ]]; then
+        if state_restore_latest_snapshot "$rname"; then
+          log_warn "source $rname: restored last snapshot"
+        fi
+      fi
+    done
+    state_clear_in_progress
+  fi
+
+  state_mark_in_progress
+
+  local changed_names=()
+  local failures=0
+  local needs_apply=0
+  local name
+  for name in "${SOURCE_NAMES[@]}"; do
+    local ref
+    ref=$(source_ref "$name")
+    local -n src="$ref"
+
+    if [[ "${src[enabled]}" != "true" ]]; then
+      if [[ -f "$STATE_DIR/current/${name}.ips" ]]; then
+        log_info "source $name: disabled, removing from firewall"
+        rm -f -- "$STATE_DIR/current/${name}.ips"
+        state_set_applied_hash "$name" ""
+        needs_apply=1
+      else
+        log_debug "source $name: disabled, skipping"
+      fi
+      continue
+    fi
+
+    local interval="${src[update_interval]:-$UPDATE_INTERVAL}"
+    if (( FORCE == 0 )) && ! source_is_due "$STATE_DIR" "$name" "$interval"; then
+      log_debug "source $name: not due (interval ${interval}s), skipping"
+      continue
+    fi
+
+    state_snapshot_source "$name"
+
+    local new_hash old_hash count
+    if ! source_process "$ref" "$STATE_DIR" "$CONFIG_BASE_DIR"; then
+      log_error "source $name: processing failed"
+      failures=$(( failures + 1 ))
+      continue
+    fi
+    count="${src[_entries]}"
+    new_hash=$(hash_file "$STATE_DIR/current/${name}.ips")
+    old_hash=$(state_get_applied_hash "$name")
+
+    state_mark_run "$name"
+
+    if [[ "$new_hash" != "$old_hash" ]]; then
+      changed_names+=("$name")
+      needs_apply=1
+      log_info "source $name: changed ($count entries)"
+    else
+      log_debug "source $name: unchanged"
+    fi
+  done
+
+  # Remove stale state for sources no longer present in the config.
+  local current_file orphan known
+  for current_file in "$STATE_DIR"/current/*.ips; do
+    [[ -e "$current_file" ]] || continue
+    orphan=$(basename -- "$current_file" .ips)
+    known=0
+    for name in "${SOURCE_NAMES[@]}"; do
+      if [[ "$name" == "$orphan" ]]; then known=1; break; fi
+    done
+    if (( known == 0 )); then
+      log_info "source $orphan: no longer configured, removing from firewall"
+      rm -f -- "$current_file"
+      state_remove_source "$orphan"
+      needs_apply=1
+    fi
+  done
+
+  # A backend change requires a rebuild so the new backend gets the allow-list.
+  local backend_changed=0
+  if [[ -n "$prev_backend" && "$prev_backend" != "$BACKEND" ]] && is_valid_backend "$prev_backend"; then
+    backend_changed=1
+    needs_apply=1
+    log_info "backend changed from $prev_backend to $BACKEND; rebuilding allow-list"
+  fi
+
+  if (( needs_apply == 1 )); then
+    local snap
+    snap=$(tmpfile "backend-snap")
+    log_debug "snapshotting current backend state"
+    backend_snapshot "$snap"
+    state_snapshot_backend "$BACKEND" "$snap"
+
+    if ! backend_apply; then
+      log_error "failed to apply firewall rules; state preserved for retry"
+      state_clear_in_progress
+      lock_release
+      exit 2
+    fi
+
+    for name in "${changed_names[@]}"; do
+      if [[ -f "$STATE_DIR/current/${name}.ips" ]]; then
+        state_set_applied_hash "$name" "$(hash_file "$STATE_DIR/current/${name}.ips")"
+      fi
+    done
+    state_set_backend "$BACKEND"
+    if (( backend_changed == 1 )); then
+      cleanup_previous_backend "$prev_backend" "$prev_firewalld_zone"
+    fi
+  else
+    log_info "no source changes; firewall unchanged"
+  fi
+
+  if [[ "$FAIL2BAN_ENABLED" == "true" ]]; then
+    if [[ -n "$prev_dropin" && "$prev_dropin" != "$FAIL2BAN_DROPIN" && -f "$prev_dropin" ]]; then
+      log_info "fail2ban: drop-in path changed, removing old $prev_dropin"
+      rm -f -- "$prev_dropin"
+    fi
+    fail2ban_apply "$STATE_DIR" "$FAIL2BAN_DROPIN"
+    state_set_key "fail2ban.ignoreip-file" "$FAIL2BAN_DROPIN"
+    fail2ban_reload
+  fi
+
+  state_clear_in_progress
+  lock_release
+  if (( failures > 0 )); then
+    log_error "sync completed with $failures source failure(s)"
+    return 2
+  fi
+  log_info "sync complete"
+  return 0
+}
+
+cmd_check() {
+  state_init "$STATE_DIR"
+  local any_changed=0 failures=0 name
+  local -a changed=()
+
+  for name in "${SOURCE_NAMES[@]}"; do
+    local ref
+    ref=$(source_ref "$name")
+    local -n src="$ref"
+    [[ "${src[enabled]}" == "true" ]] || continue
+
+    local canonical count new_hash old_hash
+    canonical=$(tmpfile "check-canon-${name}")
+    if ! source_build "$ref" "$CONFIG_BASE_DIR" "$canonical" "$STATE_DIR/current/${name}.ips"; then
+      log_error "source $name: check failed"
+      failures=$(( failures + 1 ))
+      continue
+    fi
+    count="${src[_entries]}"
+    new_hash=$(hash_file "$canonical")
+    old_hash=$(state_get_applied_hash "$name")
+
+    if [[ "$new_hash" != "$old_hash" ]]; then
+      any_changed=1
+      changed+=("$name")
+      log_info "source $name: would change ($count entries)"
+    else
+      log_info "source $name: no change"
+    fi
+  done
+
+  if (( JSON_OUT == 1 )); then
+    local joined="" first=1
+    for name in "${changed[@]:-}"; do
+      [[ -n "$name" ]] || continue
+      (( first == 1 )) || joined+=","
+      first=0
+      joined+="\"$(json_escape "$name")\""
+    done
+    local changed_flag="false"
+    (( any_changed == 1 )) && changed_flag="true"
+    printf '{"changed":%s,"sources":[%s]}\n' "$changed_flag" "$joined"
+  else
+    if (( any_changed == 1 )); then
+      out "changes pending: ${changed[*]}"
+    else
+      out "up to date"
+    fi
+  fi
+  if (( failures > 0 )); then
+    log_error "check completed with $failures source failure(s)"
+    return 2
+  fi
+  return 0
+}
+
+cmd_apply_offline() {
+  firewall_check_conflicts "$BACKEND"
+  backend_validate
+  state_init "$STATE_DIR"
+
+  local prev_backend prev_firewalld_zone prev_dropin
+  prev_backend=$(state_get_key "backend")
+  prev_firewalld_zone=$(state_get_key "firewall.firewalld-zone")
+  prev_dropin=$(state_get_key "fail2ban.ignoreip-file")
+
+  lock_acquire "$STATE_DIR/.lock"
+
+  if ! backend_apply; then
+    log_error "failed to apply firewall rules"
+    exit 2
+  fi
+  state_set_backend "$BACKEND"
+  cleanup_previous_backend "$prev_backend" "$prev_firewalld_zone"
+  if [[ "$FAIL2BAN_ENABLED" == "true" ]]; then
+    if [[ -n "$prev_dropin" && "$prev_dropin" != "$FAIL2BAN_DROPIN" && -f "$prev_dropin" ]]; then
+      log_info "fail2ban: drop-in path changed, removing old $prev_dropin"
+      rm -f -- "$prev_dropin"
+    fi
+    fail2ban_apply "$STATE_DIR" "$FAIL2BAN_DROPIN"
+    state_set_key "fail2ban.ignoreip-file" "$FAIL2BAN_DROPIN"
+    fail2ban_reload
+  fi
+  log_info "applied cached state"
+}
+
+cmd_cleanup() {
+  backend_validate
+  state_init "$STATE_DIR"
+  lock_acquire "$STATE_DIR/.lock"
+  backend_cleanup
+  # Invalidate applied hashes so the next sync rebuilds the allow-list.
+  rm -f -- "$STATE_DIR"/applied/*.hash
+  if [[ "$FAIL2BAN_ENABLED" == "true" ]]; then
+    fail2ban_cleanup "$FAIL2BAN_DROPIN"
+  fi
+  log_info "cleanup complete"
+}
+
+cmd_sources() {
+  if (( JSON_OUT == 1 )); then
+    printf '['
+    local first=1 name
+    for name in "${SOURCE_NAMES[@]}"; do
+      local ref
+      ref=$(source_ref "$name")
+      local -n src="$ref"
+      (( first == 1 )) || printf ','
+      first=0
+      printf '{"name":"%s","enabled":%s,"type":"%s","min_entries":%s,' \
+        "$(json_escape "$name")" "${src[enabled]}" "${src[type]}" "${src[min_entries]}"
+      if [[ "${src[type]}" == "http" ]]; then
+        printf '"urls":"%s"}' "$(json_escape "${src[urls]}")"
+      else
+        printf '"file_path":"%s"}' "$(json_escape "${src[file_path]}")"
+      fi
+    done
+    printf ']\n'
+    return 0
+  fi
+
+  printf '%-20s %-8s %-6s %-10s %s\n' "NAME" "ENABLED" "TYPE" "MIN" "TARGET"
+  local name
+  for name in "${SOURCE_NAMES[@]}"; do
+    local ref
+    ref=$(source_ref "$name")
+    local -n src="$ref"
+    local target
+    target=$(source_target "$ref")
+    printf '%-20s %-8s %-6s %-10s %s\n' \
+      "$name" "${src[enabled]}" "${src[type]}" "${src[min_entries]}" "$target"
+  done
+}
+
+cmd_status() {
+  state_init "$STATE_DIR"
+
+  local backend_state
+  backend_state=$(backend_status)
+
+  if [[ $STATUS_CHECK -eq 1 ]]; then
+    local issues=0 name
+    local enabled_count=0
+    for name in "${SOURCE_NAMES[@]}"; do
+      local ref
+      ref=$(source_ref "$name")
+      local -n src="$ref"
+      [[ "${src[enabled]}" == "true" ]] || continue
+      enabled_count=$(( enabled_count + 1 ))
+      local current="$STATE_DIR/current/${name}.ips"
+      if [[ ! -f "$current" ]]; then
+        log_error "CRITICAL: source $name has no applied state"
+        issues=2
+        continue
+      fi
+      local entries
+      entries=$(count_lines "$current")
+      local min="${src[min_entries]}"
+      if (( entries < min )); then
+        log_error "CRITICAL: source $name has $entries entries (< min_entries=$min)"
+        (( issues < 2 )) && issues=2
+      fi
+      if state_in_progress; then
+        log_error "WARNING: a run is in progress or was interrupted"
+        (( issues < 1 )) && issues=1
+      fi
+    done
+    if (( enabled_count == 0 )); then
+      err "WARNING: no enabled sources"
+      (( issues < 1 )) && issues=1
+    fi
+    if [[ "$backend_state" == "inactive" ]]; then
+      err "WARNING: firewall table inactive"
+      (( issues < 1 )) && issues=1
+    fi
+    if (( issues == 0 )); then
+      out "OK: $enabled_count sources, backend $backend_state"
+    fi
+    return "$issues"
+  fi
+
+  if (( JSON_OUT == 1 )); then
+    printf '{"version":"%s","backend":"%s","backend_status":"%s","state_dir":"%s","in_progress":%s,"sources":[' \
+      "$IP_ALLOWLIST_VERSION" "$BACKEND" "$(json_escape "$backend_state")" "$(json_escape "$STATE_DIR")" \
+      "$(state_in_progress && echo true || echo false)"
+    local first=1 name
+    for name in "${SOURCE_NAMES[@]}"; do
+      local ref
+      ref=$(source_ref "$name")
+      local -n src="$ref"
+      local current="$STATE_DIR/current/${name}.ips"
+      local entries=0 v4=0 v6=0
+      if [[ -f "$current" ]]; then
+        entries=$(count_lines "$current")
+        read -r v4 v6 < <(count_v4_v6 "$current")
+      fi
+      (( first == 1 )) || printf ','
+      first=0
+      printf '{"name":"%s","enabled":%s,"entries":%s,"v4":%s,"v6":%s,"hash":"%s","last_run":"%s"}' \
+        "$(json_escape "$name")" "${src[enabled]}" "$entries" "$v4" "$v6" \
+        "$(state_get_applied_hash "$name")" "$(state_last_run "$name")"
+    done
+    printf ']}\n'
+    return 0
+  fi
+
+  printf 'ip-allowlist %s\n' "$IP_ALLOWLIST_VERSION"
+  printf 'config:     %s\n' "$CONFIG_FILE"
+  printf 'backend:    %s (%s)\n' "$BACKEND" "$backend_state"
+  printf 'state dir:  %s\n' "$STATE_DIR"
+  if state_in_progress; then
+    printf 'status:     IN PROGRESS (interrupted run detected)\n'
+  else
+    printf 'status:     idle\n'
+  fi
+  printf '\n%-20s %-8s %-8s %-6s %-6s %-16s %s\n' "SOURCE" "ENABLED" "ENTRIES" "V4" "V6" "LAST RUN" "HASH"
+  local name
+  for name in "${SOURCE_NAMES[@]}"; do
+    local ref
+    ref=$(source_ref "$name")
+    local -n src="$ref"
+    local current="$STATE_DIR/current/${name}.ips"
+    local entries=0 v4=0 v6=0
+    if [[ -f "$current" ]]; then
+      entries=$(count_lines "$current")
+      read -r v4 v6 < <(count_v4_v6 "$current")
+    fi
+    local last
+    last=$(state_last_run "$name")
+    if [[ -n "$last" ]]; then
+      last=$(date -u -d "@$last" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "$last")
+    else
+      last="never"
+    fi
+    local hash
+    hash=$(state_get_applied_hash "$name")
+    hash="${hash:0:12}"
+    printf '%-20s %-8s %-8s %-6s %-6s %-16s %s\n' \
+      "$name" "${src[enabled]}" "$entries" "$v4" "$v6" "$last" "${hash:-none}"
+  done
+}
+
+cmd_upgrade() {
+  local repo="SemouSky/ip-allowlist"
+  local api="https://api.github.com/repos/${repo}/releases/latest"
+  local latest
+  if ! latest=$(http_fetch "$api" 2>/dev/null | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n1 | sed 's/.*"\([^"]*\)"$/\1/'); then
+    die "failed to query latest release"
+  fi
+  latest="${latest#v}"
+  [[ -n "$latest" ]] || die "could not determine latest version"
+
+  if [[ "$latest" == "$IP_ALLOWLIST_VERSION" ]]; then
+    out "already up to date ($IP_ALLOWLIST_VERSION)"
+    return 0
+  fi
+
+  out "current: $IP_ALLOWLIST_VERSION"
+  out "latest:  $latest"
+
+  if (( UPGRADE_CHECK == 1 )); then
+    return 0
+  fi
+
+  if (( ASSUME_YES == 0 )); then
+    printf 'Upgrade to %s? [y/N] ' "$latest" >&2
+    local answer=""
+    read -r answer || true
+    case "$answer" in
+      y|Y|yes|YES) ;;
+      *) out "aborted"; return 0 ;;
+    esac
+  fi
+
+  local url="https://github.com/${repo}/releases/download/v${latest}/ip-allowlist-${latest}.tar.gz"
+  local tmpd
+  tmpd=$(tmpdir "upgrade")
+  out "downloading $url"
+  http_fetch "$url" >"$tmpd/release.tar.gz" || die "download failed"
+  tar -xzf "$tmpd/release.tar.gz" -C "$tmpd" || die "extraction failed"
+  local extracted="$tmpd/ip-allowlist-${latest}"
+  [[ -d "$extracted" ]] || die "unexpected archive layout"
+  "$extracted/install.sh" --yes || die "install failed"
+  out "upgraded to $latest"
+}
+
+cmd_install() {
+  local script="$IP_ALLOWLIST_ROOT/install.sh"
+  [[ -f "$script" ]] || die "install.sh not found at $script"
+  local -a args=()
+  (( ASSUME_YES == 1 )) && args+=(--yes)
+  exec "$script" "${args[@]}"
+}
+
+cmd_uninstall() {
+  local script="$IP_ALLOWLIST_ROOT/uninstall.sh"
+  [[ -f "$script" ]] || die "uninstall.sh not found at $script"
+  local -a args=()
+  (( PURGE == 1 )) && args+=(--purge)
+  (( ASSUME_YES == 1 )) && args+=(--yes)
+  exec "$script" "${args[@]}"
+}
+
+# ---------------------------------------------------------------------------
+# Entry
+# ---------------------------------------------------------------------------
+
+main() {
+  parse_args "$@"
+  load_libraries
+
+  # Reclaim temp files and release the lock on every exit path.
+  trap 'cleanup_tmp; lock_release' EXIT
+
+  case "$COMMAND" in
+    help)
+      usage
+      exit 0
+      ;;
+    version)
+      cmd_version
+      exit 0
+      ;;
+    install)
+      cmd_install
+      exit 0
+      ;;
+    uninstall)
+      cmd_uninstall
+      exit 0
+      ;;
+    upgrade)
+      cmd_upgrade
+      exit $?
+      ;;
+  esac
+
+  load_main_config
+  load_backend "$BACKEND"
+  setup_logging
+  load_sources
+
+  case "$COMMAND" in
+    sync)          cmd_sync ;;
+    check)         cmd_check ;;
+    apply-offline) cmd_apply_offline ;;
+    cleanup)       cmd_cleanup ;;
+    sources)       cmd_sources ;;
+    status)        cmd_status ;;
+    *)
+      err "unknown command: $COMMAND"
+      usage >&2
+      exit 64
+      ;;
+  esac
+}
+
+main "$@"

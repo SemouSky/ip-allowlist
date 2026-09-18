@@ -1,0 +1,38 @@
+# ip-allowlist main configuration
+# All paths relative to this file's directory unless absolute
+# No spaces allowed in path values
+
+# Config schema version for migration tracking
+schema_version=1
+
+# Firewall backend: nft | ufw | firewalld (REQUIRED - no auto-detect)
+firewall_backend=nft
+
+# Base chain/set name prefix (default: ip-allowlist)
+firewall_chain_name=ip-allowlist
+
+# Table family for nftables: inet | ip | ip6 (default: inet)
+firewall_table_family=inet
+
+# Target zone for firewalld (default: firewalld's default zone)
+# firewall_firewalld_zone=public
+
+# Fail2ban integration
+fail2ban_enabled=true
+fail2ban_ignoreip_file=/etc/fail2ban/ip-allowlist.conf
+
+# Paths (relative to config dir or absolute)
+paths.state_dir=/var/lib/ip-allowlist
+paths.sources_dir=/etc/ip-allowlist/sources.d
+paths.log_file=/var/log/ip-allowlist.log
+
+# Logging
+logging.level=info
+logging.target=auto
+logging.format=text
+
+# Default update interval in seconds (15 minutes)
+update_interval=900
+
+# Run update on boot via oneshot service
+update_on_boot=true

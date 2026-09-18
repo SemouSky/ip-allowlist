@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  test:
+    name: Test (${{ matrix.distro }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        distro:
+          - ubuntu-22.04
+          - ubuntu-24.04
+          - fedora
+          - rocky
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up test environment
+        run: |
+          cd tests/docker/${{ matrix.distro }}
+          docker build -t ip-allowlist-test:${{ matrix.distro }} .
+
+      - name: Run tests
+        run: |
+          docker run --rm --privileged \
+            -v "${{ github.workspace }}:/src" \
+            -w /src \
+            ip-allowlist-test:${{ matrix.distro }} \
+            /src/tests/run.sh --local
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run lint
+        run: ./tests/lint.sh
+
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Release Please
+        uses: google-github-actions/release-please-action@v4
+        with:
+          release-type: simple
+          config-file: .release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  build-release:
+    name: Build Release
+    runs-on: ubuntu-latest
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(cat version.txt)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create release archive
+        run: |
+          mkdir -p dist
+          tar -czf "dist/ip-allowlist-${{ steps.version.outputs.version }}.tar.gz" \
+            --transform "s|^|ip-allowlist-${{ steps.version.outputs.version }}/|" \
+            ip-allowlist lib install.sh uninstall.sh config config sources.d systemd README.md LICENSE CHANGELOG.md
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          files: dist/ip-allowlist-${{ steps.version.outputs.version }}.tar.gz
+          generate_release_notes: true

@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run without creating release'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate version
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [[ ! $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
+            echo "Invalid version format: $VERSION"
+            exit 1
+          fi
+          echo "Releasing version: $VERSION"
+
+      - name: Update version.txt
+        if: ${{ !github.event.inputs.dry_run }}
+        run: |
+          echo "${{ github.event.inputs.version }}" > version.txt
+
+      - name: Update CHANGELOG.md
+        if: ${{ !github.event.inputs.dry_run }}
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          DATE=$(date +%Y-%m-%d)
+          sed -i "s/## \[Unreleased\]/## [Unreleased]\n\n## [$VERSION] - $DATE/" CHANGELOG.md
+
+      - name: Commit version bump
+        if: ${{ !github.event.inputs.dry_run }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add version.txt CHANGELOG.md
+          git commit -m "chore: release ${{ github.event.inputs.version }}"
+
+      - name: Create tag
+        if: ${{ !github.event.inputs.dry_run }}
+        run: |
+          git tag -a "v${{ github.event.inputs.version }}" -m "Release ${{ github.event.inputs.version }}"
+
+      - name: Push changes
+        if: ${{ !github.event.inputs.dry_run }}
+        run: |
+          git push origin main --tags
+
+      - name: Build release archive
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          mkdir -p dist
+          tar -czf "dist/ip-allowlist-${VERSION}.tar.gz" \
+            --transform "s|^|ip-allowlist-${VERSION}/|" \
+            ip-allowlist lib install.sh uninstall.sh config config sources.d systemd README.md LICENSE CHANGELOG.md
+
+      - name: Create GitHub Release
+        if: ${{ !github.event.inputs.dry_run }}
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          files: dist/ip-allowlist-${{ github.event.inputs.version }}.tar.gz
+          generate_release_notes: true

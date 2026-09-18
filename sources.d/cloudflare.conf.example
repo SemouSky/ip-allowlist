@@ -1,0 +1,23 @@
+# Cloudflare IP ranges source
+# Place in /etc/ip-allowlist/sources.d/cloudflare.conf
+
+# Enable this source
+enabled=true
+
+# Unique source name (required)
+name=cloudflare
+
+# Source type: http | file
+type=http
+
+# Comma-separated URLs for http type
+urls=https://www.cloudflare.com/ips-v4,https://www.cloudflare.com/ips-v6
+
+# Minimum entries required (alert if fewer)
+min_entries=5
+
+# Maximum shrink ratio before alert (0.5 = 50% reduction)
+max_shrink_ratio=0.5
+
+# Override global update_interval (seconds), optional
+# update_interval=3600

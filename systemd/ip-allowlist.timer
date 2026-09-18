@@ -1,0 +1,14 @@
+[Unit]
+Description=Run ip-allowlist periodically
+Documentation=https://github.com/SemouSky/ip-allowlist
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+AccuracySec=1min
+RandomizedDelaySec=30s
+Persistent=true
+Unit=ip-allowlist.service
+
+[Install]
+WantedBy=timers.target

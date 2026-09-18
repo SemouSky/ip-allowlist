@@ -1,0 +1,24 @@
+[Unit]
+Description=ip-allowlist firewall allow-list sync at boot
+Documentation=https://github.com/SemouSky/ip-allowlist
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/ip-allowlist/config.conf
+ConditionPathExists=/etc/ip-allowlist/update-on-boot
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ip-allowlist sync --force
+User=root
+Group=root
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/ip-allowlist /var/log/ip-allowlist.log /etc/fail2ban
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_OVERRIDE
+AmbientCapabilities=CAP_NET_ADMIN CAP_DAC_OVERRIDE
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

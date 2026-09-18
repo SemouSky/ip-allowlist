@@ -1,0 +1,22 @@
+[Unit]
+Description=ip-allowlist firewall allow-list sync
+Documentation=https://github.com/SemouSky/ip-allowlist
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/ip-allowlist/config.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ip-allowlist sync
+User=root
+Group=root
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/ip-allowlist /var/log/ip-allowlist.log /etc/fail2ban
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_OVERRIDE
+AmbientCapabilities=CAP_NET_ADMIN CAP_DAC_OVERRIDE
+
+[Install]
+WantedBy=multi-user.target

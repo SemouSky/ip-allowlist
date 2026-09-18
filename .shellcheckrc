@@ -1,0 +1,18 @@
+# shellcheck shell=bash
+
+# Project-wide shellcheck configuration.
+# The project targets bash 4.4+ on Linux.
+
+# Sourced library files are not followed by shellcheck.
+disable=SC1090,SC1091
+
+# SC2034/SC2154: globals and nameref array elements are defined in one file and
+# used in another (e.g. LOG_LEVEL, DRY_RUN, RUN_ID), which shellcheck cannot see
+# when files are checked independently.
+disable=SC2034,SC2154
+
+# SC2317: unreachable command (false positives in sourced libraries).
+disable=SC2317
+
+# Only fail on warnings and above; info/style are advisory for this codebase.
+severity=warning

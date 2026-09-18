@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.0.0 (2026-09-18)
+
+
+### Features
+
+* implement ip-allowlist firewall allow-list manager ([1e3fd04](https://github.com/SemouSky/ip-allowlist/commit/1e3fd04131307caeb72d78eb9a7f9b149364ca10))
+
 ## [Unreleased]
 
 ### Added

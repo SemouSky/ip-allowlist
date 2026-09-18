@@ -82,6 +82,8 @@ logrotate 配置安装在 `/etc/logrotate.d/ip-allowlist`。
 
 同一时间只能有一个管理器处于活跃状态。若正在运行的管理器与 `firewall_backend` 不一致，运行会报错停止。
 
+规则参数（`allow_ports`、`allow_protocol`、`enable_ipv4`、`enable_ipv6`）以及会影响产物的设置（后端、chain 名、表地址族、firewalld zone）都会参与指纹计算。修改其中任一项，即使获取到的来源数据未变，下次 `sync` 也会触发重建。若不想联网获取，可用 `apply-offline` 直接按当前配置重建。
+
 修改 `firewall_backend` 会在新后端上触发重建，然后清理上一个后端的对象。修改 `firewall_firewalld_zone` 会清理旧 zone 的富规则，修改 `fail2ban_ignoreip_file` 会清理旧的 drop-in 文件。
 
 ## 卸载

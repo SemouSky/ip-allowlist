@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Backend-switch cleanup: changing `firewall_backend` removes the previous
   backend's objects; `firewall_firewalld_zone` and `fail2ban_ignoreip_file`
   changes clean up the old zone rules / drop-in
+- Configurable allow-rule parameters `allow_ports`, `allow_protocol`,
+  `enable_ipv4` and `enable_ipv6` (main defaults, per-source overrides) with
+  nft, ufw and firewalld rendering
+- Desired-state fingerprint so config-only changes (rule parameters, backend,
+  chain name, table family, zone) rebuild on the next sync
 - Chinese translations of all documentation (`*.zh-CN.md`)
 
 ### Fixed

@@ -98,6 +98,12 @@ applied hashes so the next `sync` rebuilds the allow-list.
 Only one manager may be active. If a different manager is running than
 `firewall_backend` specifies, the run stops with an error.
 
+Rule parameters (`allow_ports`, `allow_protocol`, `enable_ipv4`,
+`enable_ipv6`) and output-affecting settings (backend, chain name, table family,
+firewalld zone) are fingerprinted. Changing any of them triggers a rebuild on
+the next `sync`, even if the fetched source data is unchanged. To apply a
+config change without fetching, run `apply-offline`.
+
 Changing `firewall_backend` triggers a rebuild on the new backend and then
 removes the previous backend's objects. Changing `firewall_firewalld_zone`
 removes the old zone's rich rules, and changing `fail2ban_ignoreip_file` removes

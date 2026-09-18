@@ -49,6 +49,21 @@ min_entries=1
 
 A relative `file_path` is resolved against the main config directory.
 
+## Rule parameters
+
+A source can override the main allow-rule parameters:
+
+```ini
+allow_ports=443
+allow_protocol=tcp+udp
+enable_ipv4=true
+enable_ipv6=false
+```
+
+The default is `any`, which allows every port and protocol from the source
+addresses. See [configuration](configuration.md#rule-parameters) for the
+semantics of each option.
+
 ## Canonicalization
 
 All sources go through the same pipeline:

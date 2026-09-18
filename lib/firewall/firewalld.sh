@@ -83,12 +83,35 @@ firewalld_remove_rich_rules() {
   done < <(firewall-cmd --permanent --zone="$zone" --list-rich-rules 2>/dev/null)
 }
 
-firewalld_add_rich_rule() {
-  local zone="$1" name="$2" fam="$3"
+# Add the rich rule(s) for one set, honouring ports and protocols.
+# Usage: firewalld_add_rules <zone> <set_name> <v4|v6> <ports> <protocols>
+firewalld_add_rules() {
+  local zone="$1" name="$2" fam="$3" ports="$4" protocols="$5"
   local rfamily
   rfamily=$(firewalld_family_rule "$fam")
-  firewall-cmd --permanent --zone="$zone" \
-    --add-rich-rule="rule family=\"$rfamily\" source ipset=\"$name\" accept" >/dev/null 2>&1
+
+  if [[ -z "$protocols" ]]; then
+    firewall-cmd --permanent --zone="$zone" \
+      --add-rich-rule="rule family=\"$rfamily\" source ipset=\"$name\" accept" >/dev/null 2>&1
+    return 0
+  fi
+
+  local proto range
+  for proto in $protocols; do
+    if [[ "$ports" == "any" ]]; then
+      firewall-cmd --permanent --zone="$zone" \
+        --add-rich-rule="rule family=\"$rfamily\" source ipset=\"$name\" protocol value=\"$proto\" accept" >/dev/null 2>&1 \
+        || return 1
+    else
+      for range in ${ports//,/ }; do
+        [[ -n "$range" ]] || continue
+        firewall-cmd --permanent --zone="$zone" \
+          --add-rich-rule="rule family=\"$rfamily\" source ipset=\"$name\" port port=\"$range\" protocol=\"$proto\" accept" >/dev/null 2>&1 \
+          || return 1
+      done
+    fi
+  done
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -125,7 +148,9 @@ firewalld_create_set() {
 firewalld_remove_stale_sets() {
   local -a desired=("$@")
   local existing d keep
-  while IFS= read -r existing || [[ -n "$existing" ]]; do
+  local -a sets=()
+  read -ra sets < <(firewall-cmd --permanent --get-ipsets 2>/dev/null)
+  for existing in "${sets[@]:-}"; do
     [[ -n "$existing" ]] || continue
     [[ "$existing" == "${FIREWALLD_IPSET_PREFIX}-"* ]] || continue
     keep=0
@@ -136,7 +161,7 @@ firewalld_remove_stale_sets() {
     if (( keep == 0 )); then
       firewall-cmd --permanent --delete-ipset="$existing" >/dev/null 2>&1 || true
     fi
-  done < <(firewall-cmd --permanent --get-ipsets 2>/dev/null)
+  done
 }
 
 # ---------------------------------------------------------------------------
@@ -170,11 +195,21 @@ firewalld_apply() {
   firewalld_remove_rich_rules "$zone"
 
   local -a desired=()
-  local f base fam entries name
+  local f base fam entries name ports protocol ipv4 ipv6 protocols
   for f in "$state_dir"/current/*.ips; do
     [[ -e "$f" ]] || continue
     base=$(basename -- "$f" .ips)
+    ports=$(rule_spec_get "$state_dir" "$base" allow_ports any)
+    protocol=$(rule_spec_get "$state_dir" "$base" allow_protocol any)
+    ipv4=$(rule_spec_get "$state_dir" "$base" enable_ipv4 true)
+    ipv6=$(rule_spec_get "$state_dir" "$base" enable_ipv6 true)
+    protocols=$(effective_protocols "$protocol" "$ports")
     for fam in v4 v6; do
+      if [[ "$fam" == "v4" ]]; then
+        [[ "$ipv4" == "true" ]] || continue
+      else
+        [[ "$ipv6" == "true" ]] || continue
+      fi
       entries=$(tmpfile "fw-${base}-${fam}")
       if [[ "$fam" == "v4" ]]; then
         grep -v ':' "$f" >"$entries" 2>/dev/null || true
@@ -187,8 +222,8 @@ firewalld_apply() {
       if ! firewalld_create_set "$name" "$fam" "$entries"; then
         return 1
       fi
-      if ! firewalld_add_rich_rule "$zone" "$name" "$fam"; then
-        log_error "firewalld: failed to add rich rule for $name"
+      if ! firewalld_add_rules "$zone" "$name" "$fam" "$ports" "$protocols"; then
+        log_error "firewalld: failed to add rich rules for $name"
         return 1
       fi
     done
@@ -222,11 +257,13 @@ firewalld_cleanup() {
   local zone existing
   zone=$(firewalld_target_zone)
   [[ -n "$zone" ]] && firewalld_remove_rich_rules "$zone"
-  while IFS= read -r existing || [[ -n "$existing" ]]; do
+  local -a sets=()
+  read -ra sets < <(firewall-cmd --permanent --get-ipsets 2>/dev/null)
+  for existing in "${sets[@]:-}"; do
     [[ -n "$existing" ]] || continue
     [[ "$existing" == "${FIREWALLD_IPSET_PREFIX}-"* ]] || continue
     firewall-cmd --permanent --delete-ipset="$existing" >/dev/null 2>&1 || true
-  done < <(firewall-cmd --permanent --get-ipsets 2>/dev/null)
+  done
   firewall-cmd --reload >/dev/null 2>&1 || true
   log_info "firewalld: removed managed ipsets and rich rules"
 }
@@ -234,7 +271,7 @@ firewalld_cleanup() {
 firewalld_status() {
   if firewalld_available && firewalld_running; then
     local n zone
-    n=$(firewall-cmd --permanent --get-ipsets 2>/dev/null | grep -c "^${FIREWALLD_IPSET_PREFIX}-" || true)
+    n=$(firewall-cmd --permanent --get-ipsets 2>/dev/null | tr ' ' '\n' | grep -c "^${FIREWALLD_IPSET_PREFIX}-" || true)
     zone=$(firewalld_target_zone)
     printf 'active ipsets=%s zone=%s' "$n" "$zone"
   else

@@ -3,8 +3,10 @@
 #
 # ufw has no native set/chain grouping, so each source entry is installed as an
 # individual allow rule tagged with a comment of the form
-# "ip-allowlist:<source>". Sync diffs the rules ufw reports as added against the
-# desired set and only adds/removes the difference.
+# "ip-allowlist:<source>". A rule is identified by the tuple
+# cidr|source|protocol|port, so a source can allow all traffic, a protocol, or
+# specific ports. Sync diffs the rules ufw reports as added against the desired
+# set and only adds/removes the difference.
 #
 # Sourced by the main script; do not execute directly.
 
@@ -47,36 +49,69 @@ ufw_normalize_cidr() {
 # ---------------------------------------------------------------------------
 
 # Build the desired rule set from a state dir.
-# Emits "cidr|source" lines, sorted and unique.
+# Emits "cidr|source|protocol|port" lines, sorted and unique.
 # Usage: ufw_build_desired <state_dir> <out_file>
 ufw_build_desired() {
   local state_dir="$1" out="$2"
   : >"$out"
-  local f base line
+  local f base line ports protocol ipv4 ipv6 protocols p r
   for f in "$state_dir"/current/*.ips; do
     [[ -e "$f" ]] || continue
     base=$(basename -- "$f" .ips)
+    ports=$(rule_spec_get "$state_dir" "$base" allow_ports any)
+    protocol=$(rule_spec_get "$state_dir" "$base" allow_protocol any)
+    ipv4=$(rule_spec_get "$state_dir" "$base" enable_ipv4 true)
+    ipv6=$(rule_spec_get "$state_dir" "$base" enable_ipv6 true)
+    protocols=$(effective_protocols "$protocol" "$ports")
+
+    local -a ranges=()
+    if [[ "$ports" != "any" ]]; then
+      IFS=',' read -ra ranges <<<"$ports"
+    fi
+
     while IFS= read -r line || [[ -n "$line" ]]; do
       [[ -z "$line" ]] && continue
-      printf '%s|%s\n' "$line" "$base" >>"$out"
+      if [[ "$line" == *:* ]]; then
+        [[ "$ipv6" == "true" ]] || continue
+      else
+        [[ "$ipv4" == "true" ]] || continue
+      fi
+      if [[ -z "$protocols" ]]; then
+        printf '%s|%s|any|any\n' "$line" "$base" >>"$out"
+      elif [[ "$ports" == "any" ]]; then
+        for p in $protocols; do
+          printf '%s|%s|%s|any\n' "$line" "$base" "$p" >>"$out"
+        done
+      else
+        for p in $protocols; do
+          for r in "${ranges[@]:-}"; do
+            [[ -n "$r" ]] || continue
+            printf '%s|%s|%s|%s\n' "$line" "$base" "$p" "${r//-/:}" >>"$out"
+          done
+        done
+      fi
     done <"$f"
   done
   LC_ALL=C sort -u -o "$out" "$out"
 }
 
-# Parse "ufw show added" output into "cidr|source" lines.
+# Parse "ufw show added" output into "cidr|source|protocol|port" lines.
 # Usage: ufw_parse_added <raw_file> <out_file>
 ufw_parse_added() {
   local raw="$1" out="$2"
   : >"$out"
-  local line cidr source norm
+  local line cidr source proto port norm
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" == *"${UFW_COMMENT_PREFIX}:"* ]] || continue
     cidr=$(printf '%s' "$line" | sed -n 's/.*from \([^ ]*\).*/\1/p')
     source=$(printf '%s' "$line" | sed -n "s/.*comment '${UFW_COMMENT_PREFIX}:\([^']*\)'.*/\1/p")
     [[ -n "$cidr" && -n "$source" ]] || continue
+    proto=$(printf '%s' "$line" | sed -n 's/.*proto \([^ ]*\).*/\1/p')
+    port=$(printf '%s' "$line" | sed -n 's/.*port \([^ ]*\).*/\1/p')
+    [[ -n "$proto" ]] || proto=any
+    [[ -n "$port" ]] || port=any
     norm=$(ufw_normalize_cidr "$cidr")
-    printf '%s|%s\n' "$norm" "$source" >>"$out"
+    printf '%s|%s|%s|%s\n' "$norm" "$source" "$proto" "$port" >>"$out"
   done <"$raw"
   LC_ALL=C sort -u -o "$out" "$out"
 }
@@ -87,23 +122,49 @@ ufw_parse_added() {
 
 # Add one managed rule.
 ufw_add_rule() {
-  local cidr="$1" source="$2"
+  local cidr="$1" source="$2" proto="$3" port="$4"
+  local -a args=(allow from "$cidr")
+  if [[ "$port" == "any" ]]; then
+    if [[ "$proto" == "any" ]]; then
+      args+=(to any)
+    else
+      args+=(proto "$proto")
+    fi
+  else
+    [[ "$proto" == "any" ]] && proto=tcp
+    args+=(to any port "$port" proto "$proto")
+  fi
+  args+=(comment "${UFW_COMMENT_PREFIX}:${source}")
+
   if [[ $DRY_RUN -eq 1 ]]; then
-    log_info "ufw: dry-run, would allow from $cidr (source $source)"
+    log_info "ufw: dry-run, would add: ufw ${args[*]}"
     return 0
   fi
-  ufw allow from "$cidr" to any comment "${UFW_COMMENT_PREFIX}:${source}" >/dev/null 2>&1 \
-    || { log_error "ufw: failed to allow $cidr"; return 1; }
+  ufw "${args[@]}" >/dev/null 2>&1 \
+    || { log_error "ufw: failed to add rule for $cidr"; return 1; }
 }
 
 # Delete one managed rule.
 ufw_del_rule() {
-  local cidr="$1" source="$2"
+  local cidr="$1" source="$2" proto="$3" port="$4"
+  local -a args=(delete allow from "$cidr")
+  if [[ "$port" == "any" ]]; then
+    if [[ "$proto" == "any" ]]; then
+      args+=(to any)
+    else
+      args+=(proto "$proto")
+    fi
+  else
+    [[ "$proto" == "any" ]] && proto=tcp
+    args+=(to any port "$port" proto "$proto")
+  fi
+  args+=(comment "${UFW_COMMENT_PREFIX}:${source}")
+
   if [[ $DRY_RUN -eq 1 ]]; then
-    log_info "ufw: dry-run, would delete allow from $cidr (source $source)"
+    log_info "ufw: dry-run, would delete: ufw ${args[*]}"
     return 0
   fi
-  ufw delete allow from "$cidr" to any comment "${UFW_COMMENT_PREFIX}:${source}" >/dev/null 2>&1 \
+  ufw "${args[@]}" >/dev/null 2>&1 \
     || { log_warn "ufw: failed to delete rule for $cidr"; return 1; }
 }
 
@@ -125,14 +186,14 @@ ufw_apply() {
   LC_ALL=C comm -13 "$existing" "$desired" >"$added"
   LC_ALL=C comm -23 "$existing" "$desired" >"$removed"
 
-  local failures=0 cidr source
-  while IFS='|' read -r cidr source || [[ -n "$cidr" ]]; do
+  local failures=0 cidr source proto port
+  while IFS='|' read -r cidr source proto port || [[ -n "$cidr" ]]; do
     [[ -n "$cidr" ]] || continue
-    ufw_del_rule "$cidr" "$source" || failures=$(( failures + 1 ))
+    ufw_del_rule "$cidr" "$source" "$proto" "$port" || failures=$(( failures + 1 ))
   done <"$removed"
-  while IFS='|' read -r cidr source || [[ -n "$cidr" ]]; do
+  while IFS='|' read -r cidr source proto port || [[ -n "$cidr" ]]; do
     [[ -n "$cidr" ]] || continue
-    ufw_add_rule "$cidr" "$source" || failures=$(( failures + 1 ))
+    ufw_add_rule "$cidr" "$source" "$proto" "$port" || failures=$(( failures + 1 ))
   done <"$added"
 
   local n_add n_del
@@ -153,14 +214,14 @@ ufw_snapshot() {
 }
 
 ufw_cleanup() {
-  local raw existing cidr source
+  local raw existing cidr source proto port
   raw=$(tmpfile "ufw-clean-raw")
   existing=$(tmpfile "ufw-clean-existing")
   ufw show added 2>/dev/null >"$raw"
   ufw_parse_added "$raw" "$existing"
-  while IFS='|' read -r cidr source || [[ -n "$cidr" ]]; do
+  while IFS='|' read -r cidr source proto port || [[ -n "$cidr" ]]; do
     [[ -n "$cidr" ]] || continue
-    ufw_del_rule "$cidr" "$source" || true
+    ufw_del_rule "$cidr" "$source" "$proto" "$port" || true
   done <"$existing"
   log_info "ufw: removed managed rules"
 }

@@ -14,6 +14,10 @@ optionally quoted. There is no variable expansion and no `eval`.
 | `firewall_chain_name` | identifier | `ip-allowlist` | nft table name / base chain prefix |
 | `firewall_table_family` | `inet`\|`ip`\|`ip6` | `inet` | nft table family |
 | `firewall_firewalld_zone` | zone name | firewalld default | Target zone for the firewalld backend |
+| `allow_ports` | `any` or port list | `any` | Ports to allow from source addresses |
+| `allow_protocol` | `any`\|`tcp`\|`udp`\|`tcp+udp` | `any` | Protocols to allow from source addresses |
+| `enable_ipv4` | boolean | `true` | Apply IPv4 entries |
+| `enable_ipv6` | boolean | `true` | Apply IPv6 entries |
 | `fail2ban_enabled` | boolean | `true` | Manage the ignoreip drop-in |
 | `fail2ban_ignoreip_file` | path | `/etc/fail2ban/ip-allowlist.conf` | Drop-in to manage |
 | `paths.state_dir` | path | `/var/lib/ip-allowlist` | State directory |
@@ -59,6 +63,10 @@ objects; it must be unique and match `[A-Za-z0-9_-]+`.
 | `min_entries` | integer | `1` | Fail if fewer canonical entries |
 | `max_shrink_ratio` | 0..1 | `0.5` | Warn if entries shrink more than this |
 | `update_interval` | seconds | global | Per-source override |
+| `allow_ports` | `any` or port list | global | Override the main `allow_ports` |
+| `allow_protocol` | `any`\|`tcp`\|`udp`\|`tcp+udp` | global | Override the main `allow_protocol` |
+| `enable_ipv4` | boolean | global | Override the main `enable_ipv4` |
+| `enable_ipv6` | boolean | global | Override the main `enable_ipv6` |
 
 For `type=file`, a relative `file_path` is resolved against the config
 directory. For `type=http`, only `http://` and `https://` URLs are accepted.
@@ -69,6 +77,31 @@ directory. For `type=http`, only `http://` and `https://` URLs are accepted.
   next run but keeps its config file and state history.
 - Deleting the config file removes the source and its stale state on the next
   run.
+
+## Rule parameters
+
+`allow_ports`, `allow_protocol`, `enable_ipv4` and `enable_ipv6` control what a
+source is allowed to reach. Precedence is: source config > main config >
+built-in default.
+
+- `allow_ports=any` (default) allows every port from the source addresses.
+  A list such as `443`, `443,8443` or `8000-8080` narrows the rule to those
+  ports. A port list implies TCP and UDP unless `allow_protocol` says otherwise.
+- `allow_protocol=any` (default) matches all protocols when `allow_ports=any`.
+  `tcp`, `udp` or `tcp+udp` restrict the match; when a port list is set and the
+  protocol is `any`, both TCP and UDP are used.
+- `enable_ipv4` / `enable_ipv6` drop that address family from the firewall
+  (fail2ban still receives the full union).
+
+Rendering per backend:
+
+- nft: `ip saddr @set accept` for all traffic, otherwise
+  `ip saddr @set meta l4proto tcp accept` or `ip saddr @set tcp dport { 443 } accept`.
+- ufw: `allow from <cidr>`, `allow from <cidr> proto tcp`, or
+  `allow from <cidr> to any port 443 proto tcp`.
+- firewalld: `rule ... source ipset="..." accept`,
+  `... protocol value="tcp" accept`, or
+  `... port port="443" protocol="tcp" accept`.
 
 ## Validation
 

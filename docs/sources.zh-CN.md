@@ -43,6 +43,19 @@ min_entries=1
 
 相对的 `file_path` 会相对于主配置目录解析。
 
+## 规则参数
+
+来源可以覆盖主配置的放行规则参数：
+
+```ini
+allow_ports=443
+allow_protocol=tcp+udp
+enable_ipv4=true
+enable_ipv6=false
+```
+
+默认是 `any`，即允许来源地址访问所有端口与协议。各选项语义见[配置](configuration.zh-CN.md#规则参数)。
+
 ## 规范化
 
 所有来源都经过同一条流水线：

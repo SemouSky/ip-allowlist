@@ -227,6 +227,152 @@ valid_cidr() {
 }
 
 # ---------------------------------------------------------------------------
+# Rule parameters: ports, protocol, address families
+# ---------------------------------------------------------------------------
+
+# Return 0 if the argument is a valid TCP/UDP port number.
+valid_port_number() {
+  [[ "$1" =~ ^[0-9]+$ ]] || return 1
+  (( 10#$1 >= 1 && 10#$1 <= 65535 ))
+}
+
+# Return 0 for "any", "all", an empty value, or a comma/space separated list
+# of port numbers and ranges (lo-hi).
+valid_ports_spec() {
+  local spec="${1,,}"
+  case "$spec" in
+    any|all|"") return 0 ;;
+  esac
+  local -a parts=()
+  local IFS=','
+  read -ra parts <<<"${spec// /,}"
+  local p lo hi
+  for p in "${parts[@]}"; do
+    [[ -n "$p" ]] || continue
+    if [[ "$p" == *-* ]]; then
+      lo="${p%-*}"
+      hi="${p#*-}"
+      valid_port_number "$lo" || return 1
+      valid_port_number "$hi" || return 1
+      (( 10#$lo <= 10#$hi )) || return 1
+    else
+      valid_port_number "$p" || return 1
+    fi
+  done
+  return 0
+}
+
+# Normalize a ports spec to "any" or a sorted, unique comma separated list.
+normalize_ports() {
+  local spec="${1,,}"
+  case "$spec" in
+    any|all|"") printf 'any'; return 0 ;;
+  esac
+  local -a parts=()
+  local IFS=','
+  read -ra parts <<<"${spec// /,}"
+  local -a out=()
+  local p lo hi
+  for p in "${parts[@]}"; do
+    [[ -n "$p" ]] || continue
+    if [[ "$p" == *-* ]]; then
+      lo=$(( 10#${p%-*} ))
+      hi=$(( 10#${p#*-} ))
+      out+=("${lo}-${hi}")
+    else
+      out+=("$(( 10#$p ))")
+    fi
+  done
+  if (( ${#out[@]} == 0 )); then
+    printf 'any'
+    return 0
+  fi
+  local joined
+  joined=$(printf '%s\n' "${out[@]}" | sort -u | paste -sd, -)
+  printf '%s' "$joined"
+}
+
+# Return 0 for any/all/tcp/udp/tcp+udp (comma forms accepted).
+valid_protocol_spec() {
+  case "${1,,}" in
+    any|all|tcp|udp|tcp+udp|udp+tcp|tcp,udp|udp,tcp) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Normalize a protocol spec to any|tcp|udp|tcp+udp.
+normalize_protocol() {
+  case "${1,,}" in
+    any|all|"") printf 'any' ;;
+    tcp) printf 'tcp' ;;
+    udp) printf 'udp' ;;
+    tcp+udp|udp+tcp|tcp,udp|udp,tcp) printf 'tcp+udp' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# Print the L4 protocols a rule must match, space separated.
+# Empty output means "match all traffic" (no protocol restriction).
+# Usage: effective_protocols <normalized_protocol> <normalized_ports>
+effective_protocols() {
+  local protocol="$1" ports="$2"
+  if [[ "$ports" == "any" ]]; then
+    case "$protocol" in
+      any) printf '' ;;
+      tcp+udp) printf 'tcp udp' ;;
+      *) printf '%s' "$protocol" ;;
+    esac
+  else
+    case "$protocol" in
+      any|tcp+udp) printf 'tcp udp' ;;
+      *) printf '%s' "$protocol" ;;
+    esac
+  fi
+}
+
+# Replace range separators for ufw (uses "lo:hi").
+ports_to_ufw() {
+  printf '%s' "${1//-/:}"
+}
+
+# Print one port/range per line from a normalized ports spec.
+# Usage: ports_lines <normalized_ports>
+ports_lines() {
+  [[ "$1" == "any" ]] && return 0
+  printf '%s\n' "${1//,/$'\n'}"
+}
+
+# Read one key from a source's rule spec sidecar, with a default.
+# Usage: rule_spec_get <state_dir> <name> <key> <default>
+rule_spec_get() {
+  local f="$1/rules/$2.conf" key="$3" def="$4" line
+  if [[ -f "$f" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" == "$key="* ]]; then
+        printf '%s' "${line#*=}"
+        return 0
+      fi
+    done <"$f"
+  fi
+  printf '%s' "$def"
+}
+
+# Hash a source's entries together with its effective rule parameters, so that
+# changing allow_ports/allow_protocol/enable_ipv4/enable_ipv6 is treated as a
+# change even when the fetched data is identical.
+# Usage: source_effective_hash <state_dir> <name> <ports> <protocol> <ipv4> <ipv6>
+source_effective_hash() {
+  local sd="$1" name="$2" ports="$3" protocol="$4" ipv4="$5" ipv6="$6"
+  local tmp
+  tmp=$(tmpfile "effhash-${name}")
+  {
+    cat -- "$sd/current/${name}.ips" 2>/dev/null || true
+    printf 'ports=%s\nprotocol=%s\nipv4=%s\nipv6=%s\n' "$ports" "$protocol" "$ipv4" "$ipv6"
+  } >"$tmp"
+  hash_file "$tmp"
+}
+
+# ---------------------------------------------------------------------------
 # IPv4 range merging
 # ---------------------------------------------------------------------------
 

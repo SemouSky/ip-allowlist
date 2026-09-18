@@ -19,6 +19,8 @@ source "$ROOT/lib/fail2ban.sh"
 source "$ROOT/lib/firewall/ufw.sh"
 # shellcheck source=/dev/null
 source "$ROOT/lib/firewall/firewalld.sh"
+# shellcheck source=/dev/null
+source "$ROOT/lib/firewall/nft.sh"
 
 PASS=0
 FAIL=0
@@ -37,6 +39,28 @@ assert_eq() {
     FAIL=$(( FAIL + 1 ))
     FAILED_NAMES+=("$desc")
     printf 'FAIL: %s\n  expected: %q\n  actual:   %q\n' "$desc" "$expected" "$actual" >&2
+  fi
+}
+
+assert_str_contains() {
+  local desc="$1" haystack="$2" needle="$3"
+  if [[ "$haystack" == *"$needle"* ]]; then
+    PASS=$(( PASS + 1 ))
+  else
+    FAIL=$(( FAIL + 1 ))
+    FAILED_NAMES+=("$desc")
+    printf 'FAIL: %s (missing %q)\n' "$desc" "$needle" >&2
+  fi
+}
+
+assert_str_not_contains() {
+  local desc="$1" haystack="$2" needle="$3"
+  if [[ "$haystack" != *"$needle"* ]]; then
+    PASS=$(( PASS + 1 ))
+  else
+    FAIL=$(( FAIL + 1 ))
+    FAILED_NAMES+=("$desc")
+    printf 'FAIL: %s (unexpected %q)\n' "$desc" "$needle" >&2
   fi
 }
 
@@ -242,7 +266,7 @@ EOF
 parsed_ufw="$(mktemp)"
 ufw_parse_added "$f2b_raw" "$parsed_ufw"
 assert_eq "ufw parse extracts managed rules" \
-  "$(printf '1.2.3.0/24|cloudflare\n2001:db8::/32|cf6')" "$(cat "$parsed_ufw")"
+  "$(printf '1.2.3.0/24|cloudflare|any|any\n2001:db8::/32|cf6|any|any')" "$(cat "$parsed_ufw")"
 
 ufw_state="$TMP_STATE/ufw-state"
 mkdir -p "$ufw_state/current"
@@ -250,7 +274,7 @@ printf '1.2.3.0/24\n2001:db8::/32\n' >"$ufw_state/current/cloudflare.ips"
 desired_ufw="$(mktemp)"
 ufw_build_desired "$ufw_state" "$desired_ufw"
 assert_eq "ufw desired set built" \
-  "$(printf '1.2.3.0/24|cloudflare\n2001:db8::/32|cloudflare')" "$(cat "$desired_ufw")"
+  "$(printf '1.2.3.0/24|cloudflare|any|any\n2001:db8::/32|cloudflare|any|any')" "$(cat "$desired_ufw")"
 
 # ---------------------------------------------------------------------------
 # firewalld backend helpers
@@ -268,6 +292,90 @@ assert_eq "firewalld family type v4" "inet" "$(firewalld_family_type v4)"
 assert_eq "firewalld family type v6" "inet6" "$(firewalld_family_type v6)"
 assert_eq "firewalld rule family v4" "ipv4" "$(firewalld_family_rule v4)"
 assert_eq "firewalld rule family v6" "ipv6" "$(firewalld_family_rule v6)"
+
+# ---------------------------------------------------------------------------
+# Ports / protocol / address family parameters
+# ---------------------------------------------------------------------------
+assert_ok     "ports any"            valid_ports_spec any
+assert_ok     "ports single"         valid_ports_spec 443
+assert_ok     "ports list"           valid_ports_spec "443,8443"
+assert_ok     "ports range"          valid_ports_spec "8000-8080"
+assert_ok     "ports mixed spaces"   valid_ports_spec "443, 8000-8080"
+assert_not_ok "ports zero"           valid_ports_spec 0
+assert_not_ok "ports too large"      valid_ports_spec 65536
+assert_not_ok "ports reversed"       valid_ports_spec "9000-8000"
+assert_not_ok "ports junk"           valid_ports_spec "abc"
+
+assert_eq "ports normalize dedupe"  "443,8443" "$(normalize_ports '8443, 443,443')"
+assert_eq "ports normalize any"     "any" "$(normalize_ports all)"
+assert_eq "ports normalize range"   "8000-8080" "$(normalize_ports '8000-8080')"
+assert_eq "ports normalize leading zeros" "443" "$(normalize_ports '00443')"
+
+assert_ok     "protocol tcp"       valid_protocol_spec tcp
+assert_ok     "protocol tcp+udp"   valid_protocol_spec tcp+udp
+assert_ok     "protocol tcp,udp"   valid_protocol_spec tcp,udp
+assert_not_ok "protocol sctp"      valid_protocol_spec sctp
+assert_eq "protocol normalize"     "tcp+udp" "$(normalize_protocol 'udp+tcp')"
+assert_eq "protocol normalize any" "any" "$(normalize_protocol all)"
+
+assert_eq "effective all traffic"        "" "$(effective_protocols any any)"
+assert_eq "effective tcp only"           "tcp" "$(effective_protocols tcp any)"
+assert_eq "effective tcp+udp only"       "tcp udp" "$(effective_protocols tcp+udp any)"
+assert_eq "effective ports imply both"   "tcp udp" "$(effective_protocols any 443)"
+assert_eq "effective ports + tcp"        "tcp" "$(effective_protocols tcp 443)"
+assert_eq "ports_to_ufw range"           "8000:8080" "$(ports_to_ufw 8000-8080)"
+assert_eq "ports_to_ufw list"            "443,8000:8080" "$(ports_to_ufw '443,8000-8080')"
+
+# ---------------------------------------------------------------------------
+# Rule spec sidecar + backend rendering
+# ---------------------------------------------------------------------------
+rules_state="$TMP_STATE/rules-state"
+mkdir -p "$rules_state/current" "$rules_state/rules"
+printf '1.2.3.0/24\n2001:db8::/32\n' >"$rules_state/current/src.ips"
+cat >"$rules_state/rules/src.conf" <<'EOF'
+allow_ports=443,8443
+allow_protocol=tcp
+enable_ipv4=true
+enable_ipv6=false
+EOF
+assert_eq "rule spec read ports"    "443,8443" "$(rule_spec_get "$rules_state" src allow_ports any)"
+assert_eq "rule spec read protocol" "tcp" "$(rule_spec_get "$rules_state" src allow_protocol any)"
+assert_eq "rule spec default"       "true" "$(rule_spec_get "$rules_state" missing enable_ipv4 true)"
+
+ufw_desired_out="$(mktemp)"
+ufw_build_desired "$rules_state" "$ufw_desired_out"
+assert_eq "ufw desired honours ports/family" \
+  "$(printf '1.2.3.0/24|src|tcp|443\n1.2.3.0/24|src|tcp|8443')" "$(cat "$ufw_desired_out")"
+
+ufw_raw="$(mktemp)"
+cat >"$ufw_raw" <<'EOF'
+ufw allow from 1.2.3.0/24 comment 'ip-allowlist:plain'
+ufw allow from 1.2.3.0/24 to any port 443 proto tcp comment 'ip-allowlist:ported'
+ufw allow from 2001:db8::/32 proto udp comment 'ip-allowlist:proto6'
+EOF
+ufw_parsed="$(mktemp)"
+ufw_parse_added "$ufw_raw" "$ufw_parsed"
+assert_eq "ufw parse proto/port tuples" \
+  "$(printf '1.2.3.0/24|plain|any|any\n1.2.3.0/24|ported|tcp|443\n2001:db8::/32|proto6|udp|any')" \
+  "$(cat "$ufw_parsed")"
+
+nft_state="$TMP_STATE/nft-state"
+mkdir -p "$nft_state/current" "$nft_state/rules"
+printf '1.2.3.0/24\n2001:db8::/32\n' >"$nft_state/current/src.ips"
+cat >"$nft_state/rules/src.conf" <<'EOF'
+allow_ports=443,8000-8080
+allow_protocol=tcp
+enable_ipv4=true
+enable_ipv6=false
+EOF
+NFT_FAMILY=inet
+NFT_TABLE=ip-allowlist
+nft_out="$(mktemp)"
+nft_generate_ruleset "$nft_state" "$nft_out"
+nft_content="$(cat "$nft_out")"
+assert_str_contains "nft emits port match" "$nft_content" "ip saddr @v4_src tcp dport { 443, 8000-8080 } accept"
+assert_str_not_contains "nft omits disabled v6" "$nft_content" "v6_src"
+assert_str_not_contains "nft omits plain accept when ports set" "$nft_content" "ip saddr @v4_src accept"
 
 # ---------------------------------------------------------------------------
 # Summary

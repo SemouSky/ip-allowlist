@@ -20,6 +20,7 @@ state_init() {
     "$dir/current" \
     "$dir/applied" \
     "$dir/status" \
+    "$dir/rules" \
     "$dir/snapshots" \
     "$dir/fail2ban"
 }
@@ -70,13 +71,32 @@ state_set_applied_hash() {
   printf '%s\n' "$hash" >"$f"
 }
 
-# Remove applied-hash and current entries for a source that no longer exists.
+# Remove applied-hash, entries, rule spec and run marker for a source.
 state_remove_source() {
   local name="$1"
   rm -f -- \
     "$(state_path "applied/${name}.hash")" \
     "$(state_path "current/${name}.ips")" \
+    "$(state_path "rules/${name}.conf")" \
     "$(state_path "status/${name}.last_run")"
+}
+
+# Persist the effective firewall rule parameters for a source.
+# Usage: state_write_rule_spec <name> <ports> <protocol> <ipv4> <ipv6>
+state_write_rule_spec() {
+  local name="$1" ports="$2" protocol="$3" ipv4="$4" ipv6="$5"
+  local dir
+  dir=$(state_path "rules")
+  mkdir -p -- "$dir"
+  local tmp
+  tmp=$(tmpfile "rules-${name}")
+  {
+    printf 'allow_ports=%s\n' "$ports"
+    printf 'allow_protocol=%s\n' "$protocol"
+    printf 'enable_ipv4=%s\n' "$ipv4"
+    printf 'enable_ipv6=%s\n' "$ipv6"
+  } >"$tmp"
+  atomic_install "$tmp" "$dir/${name}.conf" "0644"
 }
 
 # ---------------------------------------------------------------------------

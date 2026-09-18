@@ -17,6 +17,16 @@ firewall_table_family=inet
 # Target zone for firewalld (default: firewalld's default zone)
 # firewall_firewalld_zone=public
 
+# Default allow-rule parameters (any source may override these):
+#   allow_ports     any | port list, e.g. 443 or 443,8443 or 8000-8080
+#   allow_protocol  any | tcp | udp | tcp+udp
+#   enable_ipv4 / enable_ipv6  address family switches
+# "any" allows all traffic from the source addresses (all ports/protocols).
+allow_ports=any
+allow_protocol=any
+enable_ipv4=true
+enable_ipv6=true
+
 # Fail2ban integration
 fail2ban_enabled=true
 fail2ban_ignoreip_file=/etc/fail2ban/ip-allowlist.conf

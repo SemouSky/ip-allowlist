@@ -13,6 +13,10 @@
 | `firewall_chain_name` | 标识符 | `ip-allowlist` | nft 表名 / 基础 chain 前缀 |
 | `firewall_table_family` | `inet`\|`ip`\|`ip6` | `inet` | nft 表 family |
 | `firewall_firewalld_zone` | zone 名 | firewalld 默认 | firewalld 后端的目标 zone |
+| `allow_ports` | `any` 或端口列表 | `any` | 允许来源地址访问的端口 |
+| `allow_protocol` | `any`\|`tcp`\|`udp`\|`tcp+udp` | `any` | 允许来源地址使用的协议 |
+| `enable_ipv4` | 布尔 | `true` | 是否应用 IPv4 条目 |
+| `enable_ipv6` | 布尔 | `true` | 是否应用 IPv6 条目 |
 | `fail2ban_enabled` | 布尔 | `true` | 是否管理 ignoreip drop-in |
 | `fail2ban_ignoreip_file` | 路径 | `/etc/fail2ban/ip-allowlist.conf` | 要管理的 drop-in |
 | `paths.state_dir` | 路径 | `/var/lib/ip-allowlist` | 状态目录 |
@@ -53,6 +57,10 @@
 | `min_entries` | 整数 | `1` | 规范化条目少于该值时失败 |
 | `max_shrink_ratio` | 0..1 | `0.5` | 条目收缩超过该比例时告警 |
 | `update_interval` | 秒 | 全局值 | 按来源覆盖 |
+| `allow_ports` | `any` 或端口列表 | 全局值 | 覆盖主配置 `allow_ports` |
+| `allow_protocol` | `any`\|`tcp`\|`udp`\|`tcp+udp` | 全局值 | 覆盖主配置 `allow_protocol` |
+| `enable_ipv4` | 布尔 | 全局值 | 覆盖主配置 `enable_ipv4` |
+| `enable_ipv6` | 布尔 | 全局值 | 覆盖主配置 `enable_ipv6` |
 
 对于 `type=file`，相对的 `file_path` 会相对于配置目录解析。对于 `type=http`，仅接受 `http://` 与 `https://` URL。
 
@@ -60,6 +68,20 @@
 
 - 设置 `enabled=false` 会在下次运行时把该来源从防火墙/fail2ban 中移除，但保留其配置文件和状态历史。
 - 删除配置文件会在下次运行时移除该来源及其残留状态。
+
+## 规则参数
+
+`allow_ports`、`allow_protocol`、`enable_ipv4`、`enable_ipv6` 控制某来源可访问什么。优先级：来源配置 > 主配置 > 内置默认。
+
+- `allow_ports=any`（默认）表示允许来源地址访问所有端口。写成列表（`443`、`443,8443`、`8000-8080`）可收窄到指定端口。指定端口时默认同时使用 TCP 与 UDP，除非 `allow_protocol` 另有说明。
+- `allow_protocol=any`（默认）在 `allow_ports=any` 时表示匹配所有协议。`tcp`、`udp`、`tcp+udp` 可限制匹配；当指定端口且协议为 `any` 时，会同时生成 TCP 与 UDP。
+- `enable_ipv4` / `enable_ipv6` 会把该地址族从防火墙中排除（fail2ban 仍然使用完整并集）。
+
+各后端渲染：
+
+- nft：全放行时为 `ip saddr @set accept`；否则 `ip saddr @set meta l4proto tcp accept` 或 `ip saddr @set tcp dport { 443 } accept`。
+- ufw：`allow from <cidr>`、`allow from <cidr> proto tcp`，或 `allow from <cidr> to any port 443 proto tcp`。
+- firewalld：`rule ... source ipset="..." accept`、`... protocol value="tcp" accept`，或 `... port port="443" protocol="tcp" accept`。
 
 ## 校验
 

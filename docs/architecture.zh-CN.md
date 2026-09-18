@@ -62,7 +62,9 @@ sources.d/*.conf
   fail2ban.ignoreip-file      上次应用的 drop-in 路径（用于清理）
   .lock                       flock 目标
   current/<source>.ips        当前已应用的规范化条目
-  applied/<source>.hash       已应用条目的 SHA-256
+  rules/<source>.conf         生效的规则参数（端口/协议/地址族）
+  applied/<source>.hash       已应用条目 + 规则参数的哈希
+  desired.hash                整个期望防火墙状态的指纹
   status/<source>.last_run    上次成功获取的 Unix 时间戳
   snapshots/<source>/*.ips    每个来源最近 10 个规范化快照
   snapshots/backend/          最近 5 个后端状态转储
@@ -108,6 +110,8 @@ rule family="ipv4" source ipset="ia-<source>-v4-<hash>" accept
 后端是显式配置的（`firewall_backend`），不做自动探测。应用前，如果当前活跃的是其他防火墙管理器（例如 `firewall_backend=nft` 但 ufw 处于活跃状态），工具会报错终止；如果 ufw 与 firewalld 同时活跃，也会报错终止。
 
 当配置的后端与状态中记录的后端不一致时，运行会强制重建，使新后端获得该允许列表，然后清理上一个后端遗留的对象（例如从 nft 切换到 ufw 时删除旧的 nft 表）。firewalld zone 与 fail2ban drop-in 路径也会被记录，因此变更其中任一项时，会清理旧 zone 的富规则或旧的 drop-in 文件。
+
+仅配置变更也会被检测：`desired.hash` 会对后端、表/链/地址族、fail2ban 设置，以及每个来源的条目与规则参数取指纹。因此修改 `allow_ports`、`allow_protocol`、`enable_ipv4/6`、`firewall_chain_name`、`firewall_table_family` 或 `firewall_firewalld_zone` 时，即使来源数据未变，下次 `sync` 也会触发重建。
 
 ## 崩溃恢复
 

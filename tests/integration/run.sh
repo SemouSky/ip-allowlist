@@ -484,6 +484,55 @@ fi
 nft delete table inet ip-allowlist 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
+# 10e. rule parameters: ports, protocol, address families (nft)
+# ---------------------------------------------------------------------------
+RP="$WS/ruleparams"
+mkdir -p "$RP/sources.d"
+printf '1.2.3.0/24\n2001:db8::/32\n' >"$RP/v.txt"
+cat >"$RP/sources.d/rp.conf" <<EOF
+enabled=true
+name=rp
+type=file
+file_path=$RP/v.txt
+min_entries=1
+allow_ports=443
+allow_protocol=tcp
+enable_ipv6=false
+EOF
+cat >"$RP/sources.d/rp2.conf" <<EOF
+enabled=true
+name=rp2
+type=file
+file_path=$RP/v.txt
+min_entries=1
+allow_ports=any
+allow_protocol=udp
+enable_ipv4=false
+EOF
+cat >"$RP/config.conf" <<EOF
+firewall_backend=nft
+fail2ban_enabled=false
+paths.state_dir=$RP/state
+paths.sources_dir=$RP/sources.d
+paths.log_file=$RP/log
+logging.target=stdout
+update_interval=0
+EOF
+"$CLI" --config "$RP/config.conf" sync >"$RP/out" 2>&1
+rules="$(nft list table inet ip-allowlist 2>/dev/null || true)"
+assert_contains "nft limited ports rule" "$rules" "ip saddr @v4_rp tcp dport 443 accept"
+assert_not_contains "nft disabled ipv6 has no v6 set" "$rules" "v6_rp "
+assert_contains "nft protocol-only rule" "$rules" "ip6 saddr @v6_rp2 meta l4proto udp accept"
+assert_not_contains "nft disabled ipv4 has no v4 set" "$rules" "v4_rp2 "
+
+# Changing only allow_ports must rebuild even though the source data is unchanged.
+sed -i 's/^allow_ports=443$/allow_ports=443,8443/' "$RP/sources.d/rp.conf"
+"$CLI" --config "$RP/config.conf" sync >"$RP/out2" 2>&1
+rules="$(nft list table inet ip-allowlist 2>/dev/null || true)"
+assert_contains "nft port parameter change rebuilds" "$rules" "tcp dport { 443, 8443 } accept"
+"$CLI" --config "$RP/config.conf" cleanup >/dev/null 2>&1
+
+# ---------------------------------------------------------------------------
 # 11. install/uninstall smoke test
 # ---------------------------------------------------------------------------
 if [[ -x "$ROOT/install.sh" ]]; then

@@ -180,6 +180,10 @@ FIREWALL_FIREWALLD_ZONE=""
 FAIL2BAN_ENABLED="true"
 FAIL2BAN_DROPIN="/etc/fail2ban/ip-allowlist.conf"
 UPDATE_INTERVAL=900
+DEFAULT_ALLOW_PORTS="any"
+DEFAULT_ALLOW_PROTOCOL="any"
+DEFAULT_ENABLE_IPV4="true"
+DEFAULT_ENABLE_IPV6="true"
 
 locate_config() {
   if [[ -n "$CONFIG_FILE" ]]; then
@@ -261,6 +265,18 @@ load_main_config() {
   # Validate logging config
   case "$LOG_TARGET" in auto|stdout|file|syslog) ;; *) die "config: invalid logging.target '$LOG_TARGET'" ;; esac
   case "$LOG_FORMAT" in text|json) ;; *) die "config: invalid logging.format '$LOG_FORMAT'" ;; esac
+
+  # Rule parameter defaults (source configs may override).
+  local ap="${MAIN[allow_ports]:-any}"
+  valid_ports_spec "$ap" || die "config: invalid allow_ports '$ap'"
+  DEFAULT_ALLOW_PORTS=$(normalize_ports "$ap")
+  local apr="${MAIN[allow_protocol]:-any}"
+  valid_protocol_spec "$apr" || die "config: invalid allow_protocol '$apr'"
+  DEFAULT_ALLOW_PROTOCOL=$(normalize_protocol "$apr")
+  DEFAULT_ENABLE_IPV4=$(normalize_bool "${MAIN[enable_ipv4]:-true}")
+  case "$DEFAULT_ENABLE_IPV4" in true|false) ;; *) die "config: invalid enable_ipv4 '${MAIN[enable_ipv4]}'" ;; esac
+  DEFAULT_ENABLE_IPV6=$(normalize_bool "${MAIN[enable_ipv6]:-true}")
+  case "$DEFAULT_ENABLE_IPV6" in true|false) ;; *) die "config: invalid enable_ipv6 '${MAIN[enable_ipv6]}'" ;; esac
 
   validate_schema_version
 }
@@ -448,6 +464,24 @@ load_sources() {
     local -A s=()
     source_load_config s "$f"
     local name="${s[name]}"
+
+    # Rule parameters: source config overrides the main defaults.
+    if [[ -z "${s[allow_ports]:-}" ]]; then s[allow_ports]="$DEFAULT_ALLOW_PORTS"; fi
+    valid_ports_spec "${s[allow_ports]}" || die "source $f: invalid allow_ports '${s[allow_ports]}'"
+    s[allow_ports]=$(normalize_ports "${s[allow_ports]}")
+
+    if [[ -z "${s[allow_protocol]:-}" ]]; then s[allow_protocol]="$DEFAULT_ALLOW_PROTOCOL"; fi
+    valid_protocol_spec "${s[allow_protocol]}" || die "source $f: invalid allow_protocol '${s[allow_protocol]}'"
+    s[allow_protocol]=$(normalize_protocol "${s[allow_protocol]}")
+
+    if [[ -z "${s[enable_ipv4]:-}" ]]; then s[enable_ipv4]="$DEFAULT_ENABLE_IPV4"; fi
+    s[enable_ipv4]=$(normalize_bool "${s[enable_ipv4]}")
+    case "${s[enable_ipv4]}" in true|false) ;; *) die "source $f: invalid enable_ipv4 '${s[enable_ipv4]}'" ;; esac
+
+    if [[ -z "${s[enable_ipv6]:-}" ]]; then s[enable_ipv6]="$DEFAULT_ENABLE_IPV6"; fi
+    s[enable_ipv6]=$(normalize_bool "${s[enable_ipv6]}")
+    case "${s[enable_ipv6]}" in true|false) ;; *) die "source $f: invalid enable_ipv6 '${s[enable_ipv6]}'" ;; esac
+
     if [[ -n "${SOURCES[$name]:-}" ]]; then
       die "duplicate source name '$name' (in $f and ${SOURCES[$name]})"
     fi
@@ -525,10 +559,9 @@ cmd_sync() {
     local -n src="$ref"
 
     if [[ "${src[enabled]}" != "true" ]]; then
-      if [[ -f "$STATE_DIR/current/${name}.ips" ]]; then
+      if [[ -f "$STATE_DIR/current/${name}.ips" || -f "$STATE_DIR/rules/${name}.conf" ]]; then
         log_info "source $name: disabled, removing from firewall"
-        rm -f -- "$STATE_DIR/current/${name}.ips"
-        state_set_applied_hash "$name" ""
+        state_remove_source "$name"
         needs_apply=1
       else
         log_debug "source $name: disabled, skipping"
@@ -551,10 +584,13 @@ cmd_sync() {
       continue
     fi
     count="${src[_entries]}"
-    new_hash=$(hash_file "$STATE_DIR/current/${name}.ips")
-    old_hash=$(state_get_applied_hash "$name")
-
     state_mark_run "$name"
+    state_write_rule_spec "$name" "${src[allow_ports]}" "${src[allow_protocol]}" \
+      "${src[enable_ipv4]}" "${src[enable_ipv6]}"
+
+    new_hash=$(source_effective_hash "$STATE_DIR" "$name" "${src[allow_ports]}" \
+      "${src[allow_protocol]}" "${src[enable_ipv4]}" "${src[enable_ipv6]}")
+    old_hash=$(state_get_applied_hash "$name")
 
     if [[ "$new_hash" != "$old_hash" ]]; then
       changed_names+=("$name")
@@ -590,6 +626,35 @@ cmd_sync() {
     log_info "backend changed from $prev_backend to $BACKEND; rebuilding allow-list"
   fi
 
+  # Global desired-state fingerprint: backend/table/zone plus every source's
+  # entries and rule parameters. Catches config-only changes (chain name,
+  # table family, zone, allow_ports, ...) that do not alter source data.
+  local fp_tmp new_fp old_fp fpname fp_ports fp_protocol
+  fp_tmp=$(tmpfile "fingerprint")
+  {
+    printf 'backend=%s\n' "$BACKEND"
+    printf 'chain=%s\n' "$FIREWALL_CHAIN_NAME"
+    printf 'family=%s\n' "$FIREWALL_TABLE_FAMILY"
+    printf 'zone=%s\n' "$FIREWALL_FIREWALLD_ZONE"
+    printf 'fail2ban_enabled=%s\n' "$FAIL2BAN_ENABLED"
+    printf 'fail2ban_file=%s\n' "$FAIL2BAN_DROPIN"
+    for fpname in "${SOURCE_NAMES[@]}"; do
+      [[ -f "$STATE_DIR/current/${fpname}.ips" ]] || continue
+      fp_ports=$(rule_spec_get "$STATE_DIR" "$fpname" allow_ports any)
+      fp_protocol=$(rule_spec_get "$STATE_DIR" "$fpname" allow_protocol any)
+      printf 'src=%s hash=%s\n' "$fpname" \
+        "$(source_effective_hash "$STATE_DIR" "$fpname" "$fp_ports" "$fp_protocol" \
+          "$(rule_spec_get "$STATE_DIR" "$fpname" enable_ipv4 true)" \
+          "$(rule_spec_get "$STATE_DIR" "$fpname" enable_ipv6 true)")"
+    done
+  } >"$fp_tmp"
+  new_fp=$(hash_file "$fp_tmp")
+  old_fp=$(cat -- "$STATE_DIR/desired.hash" 2>/dev/null || true)
+  if [[ "$new_fp" != "$old_fp" ]]; then
+    needs_apply=1
+    log_debug "desired firewall state changed"
+  fi
+
   if (( needs_apply == 1 )); then
     local snap
     snap=$(tmpfile "backend-snap")
@@ -606,9 +671,14 @@ cmd_sync() {
 
     for name in "${changed_names[@]}"; do
       if [[ -f "$STATE_DIR/current/${name}.ips" ]]; then
-        state_set_applied_hash "$name" "$(hash_file "$STATE_DIR/current/${name}.ips")"
+        local cref
+        cref=$(source_ref "$name")
+        local -n csrc="$cref"
+        state_set_applied_hash "$name" "$(source_effective_hash "$STATE_DIR" "$name" \
+          "${csrc[allow_ports]}" "${csrc[allow_protocol]}" "${csrc[enable_ipv4]}" "${csrc[enable_ipv6]}")"
       fi
     done
+    atomic_install "$fp_tmp" "$STATE_DIR/desired.hash" "0644"
     state_set_backend "$BACKEND"
     if (( backend_changed == 1 )); then
       cleanup_previous_backend "$prev_backend" "$prev_firewalld_zone"
@@ -656,7 +726,14 @@ cmd_check() {
       continue
     fi
     count="${src[_entries]}"
-    new_hash=$(hash_file "$canonical")
+    local ehash_tmp
+    ehash_tmp=$(tmpfile "check-hash-${name}")
+    {
+      cat -- "$canonical"
+      printf 'ports=%s\nprotocol=%s\nipv4=%s\nipv6=%s\n' \
+        "${src[allow_ports]}" "${src[allow_protocol]}" "${src[enable_ipv4]}" "${src[enable_ipv6]}"
+    } >"$ehash_tmp"
+    new_hash=$(hash_file "$ehash_tmp")
     old_hash=$(state_get_applied_hash "$name")
 
     if [[ "$new_hash" != "$old_hash" ]]; then

@@ -59,19 +59,43 @@ nft_emit_set() {
   printf '  }\n'
 }
 
+# Emit one accept rule for a source set, honouring ports and protocols.
+# Usage: nft_emit_rule <ip|ip6> <set_name> <ports> <protocols>
+nft_emit_rule() {
+  local family="$1" setname="$2" ports="$3" protocols="$4"
+  if [[ -z "$protocols" ]]; then
+    printf '    %s saddr @%s accept\n' "$family" "$setname"
+    return 0
+  fi
+  local proto
+  for proto in $protocols; do
+    if [[ "$ports" == "any" ]]; then
+      printf '    %s saddr @%s meta l4proto %s accept\n' "$family" "$setname" "$proto"
+    else
+      printf '    %s saddr @%s %s dport { %s } accept\n' "$family" "$setname" "$proto" "${ports//,/, }"
+    fi
+  done
+}
+
 # Generate the full nft ruleset for all current sources into a file.
 # Usage: nft_generate_ruleset <state_dir> <output_file>
 nft_generate_ruleset() {
   local state_dir="$1" out="$2"
-  local name entries base
+  local name entries base ports protocol ipv4 ipv6 protocols
 
   local -a set_names=() set_types=() set_entries=()
-  local -a rule_families=() rule_sets=()
+  local -a rule_families=() rule_sets=() rule_ports=() rule_protocols=()
 
   for entries in "$state_dir"/current/*.ips; do
     [[ -e "$entries" ]] || continue
     base=$(basename -- "$entries" .ips)
     name=$(nft_sanitize_name "$base")
+
+    ports=$(rule_spec_get "$state_dir" "$base" allow_ports any)
+    protocol=$(rule_spec_get "$state_dir" "$base" allow_protocol any)
+    ipv4=$(rule_spec_get "$state_dir" "$base" enable_ipv4 true)
+    ipv6=$(rule_spec_get "$state_dir" "$base" enable_ipv6 true)
+    protocols=$(effective_protocols "$protocol" "$ports")
 
     local -a v4=() v6=()
     local line
@@ -84,19 +108,23 @@ nft_generate_ruleset() {
       fi
     done <"$entries"
 
-    if (( ${#v4[@]} > 0 )); then
+    if [[ "$ipv4" == "true" ]] && (( ${#v4[@]} > 0 )); then
       set_names+=("v4_${name}")
       set_types+=("ipv4_addr")
       set_entries+=("$(printf '%s\n' "${v4[@]}")")
       rule_families+=("ip")
       rule_sets+=("v4_${name}")
+      rule_ports+=("$ports")
+      rule_protocols+=("$protocols")
     fi
-    if (( ${#v6[@]} > 0 )); then
+    if [[ "$ipv6" == "true" ]] && (( ${#v6[@]} > 0 )); then
       set_names+=("v6_${name}")
       set_types+=("ipv6_addr")
       set_entries+=("$(printf '%s\n' "${v6[@]}")")
       rule_families+=("ip6")
       rule_sets+=("v6_${name}")
+      rule_ports+=("$ports")
+      rule_protocols+=("$protocols")
     fi
   done
 
@@ -116,7 +144,7 @@ nft_generate_ruleset() {
       printf '  chain input {\n'
       printf '    type filter hook input priority %s; policy accept;\n' "$NFT_PRIORITY"
       for (( i = 0; i < ${#rule_sets[@]}; i++ )); do
-        printf '    %s saddr @%s accept\n' "${rule_families[i]}" "${rule_sets[i]}"
+        nft_emit_rule "${rule_families[i]}" "${rule_sets[i]}" "${rule_ports[i]}" "${rule_protocols[i]}"
       done
       printf '  }\n'
     fi

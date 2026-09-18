@@ -169,6 +169,24 @@ new_rules="$(firewall-cmd --zone="$ALT_ZONE" --list-rich-rules 2>/dev/null || tr
 assert_contains "firewalld zone change adds new zone rule" "$new_rules" "ipset=\"ia-"
 
 # ---------------------------------------------------------------------------
+# 3c. Rule parameters: ports and protocol
+# ---------------------------------------------------------------------------
+cat >"$SOURCES/ports.conf" <<EOF
+enabled=true
+name=portrule
+type=file
+file_path=$WS/ports.txt
+min_entries=1
+allow_ports=443,8443
+allow_protocol=tcp
+EOF
+printf '1.2.3.0/24\n' >"$WS/ports.txt"
+"$CLI" --config "$CONF" sync >"$WS/out3c" 2>&1
+rules="$(firewall-cmd --zone="$ALT_ZONE" --list-rich-rules 2>/dev/null || true)"
+assert_contains "firewalld port rule 443" "$rules" 'port port="443" protocol="tcp"'
+assert_contains "firewalld port rule 8443" "$rules" 'port port="8443" protocol="tcp"'
+
+# ---------------------------------------------------------------------------
 # 4. cleanup removes everything
 # ---------------------------------------------------------------------------
 cat >"$SOURCES/test.conf" <<EOF

@@ -65,7 +65,9 @@ sources.d/*.conf
   fail2ban.ignoreip-file      Last applied drop-in path (for cleanup)
   .lock                       flock target
   current/<source>.ips        Canonical entries currently applied
-  applied/<source>.hash       SHA-256 of applied entries
+  rules/<source>.conf         Effective rule parameters (ports/protocol/families)
+  applied/<source>.hash       Hash of applied entries + rule parameters
+  desired.hash                Fingerprint of the whole desired firewall state
   status/<source>.last_run    Unix timestamp of last successful fetch
   snapshots/<source>/*.ips    Last 10 canonical snapshots per source
   snapshots/backend/          Last 5 backend state dumps
@@ -134,6 +136,12 @@ objects left by the previous backend (for example, the old nft table when
 switching to ufw). The firewalld zone and the fail2ban drop-in path are also
 tracked, so changing either cleans up the previous zone's rich rules or the old
 drop-in file.
+
+Config-only changes are detected too: `desired.hash` fingerprints the backend,
+table/chain/family, fail2ban settings and each source's entries plus rule
+parameters, so editing `allow_ports`, `allow_protocol`, `enable_ipv4/6`,
+`firewall_chain_name`, `firewall_table_family` or `firewall_firewalld_zone`
+triggers a rebuild on the next `sync` even when source data is unchanged.
 
 ## Crash recovery
 

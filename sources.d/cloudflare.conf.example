@@ -19,5 +19,12 @@ min_entries=5
 # Maximum shrink ratio before alert (0.5 = 50% reduction)
 max_shrink_ratio=0.5
 
+# Optional per-source overrides of the main rule parameters.
+# The default is "any", i.e. allow all ports/protocols from these addresses.
+# allow_ports=443
+# allow_protocol=tcp+udp
+# enable_ipv4=true
+# enable_ipv6=true
+
 # Override global update_interval (seconds), optional
 # update_interval=3600

@@ -91,6 +91,25 @@ assert_contains "ufw change applied" "$added" "from 9.9.9.9"
 assert_not_contains "ufw stale rule removed" "$added" "from 5.6.7.8"
 
 # ---------------------------------------------------------------------------
+# 2b. Rule parameters: ports and protocol
+# ---------------------------------------------------------------------------
+cat >"$SOURCES/ports.conf" <<EOF
+enabled=true
+name=portrule
+type=file
+file_path=$WS/ports.txt
+min_entries=1
+allow_ports=443
+allow_protocol=tcp+udp
+EOF
+printf '1.2.3.0/24\n' >"$WS/ports.txt"
+"$CLI" --config "$CONF" sync >"$WS/out2b" 2>&1
+added="$(ufw show added 2>/dev/null || true)"
+assert_contains "ufw port rule tcp" "$added" "to any port 443 proto tcp comment 'ip-allowlist:portrule'"
+assert_contains "ufw port rule udp" "$added" "to any port 443 proto udp comment 'ip-allowlist:portrule'"
+assert_not_contains "ufw portrule is not all-port" "$added" "from 1.2.3.0/24 comment 'ip-allowlist:portrule'"
+
+# ---------------------------------------------------------------------------
 # 3. Re-run is idempotent
 # ---------------------------------------------------------------------------
 before="$(ufw show added 2>/dev/null || true)"

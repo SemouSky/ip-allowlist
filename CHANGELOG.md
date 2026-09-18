@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1](https://github.com/SemouSky/ip-allowlist/compare/v0.1.0...v0.1.1) (2026-09-18)
+
+
+### Bug Fixes
+
+* **install:** support the curl | sudo bash bootstrap ([601ce1e](https://github.com/SemouSky/ip-allowlist/commit/601ce1ee22a6868902b35d2212c0729e826e556c))
+
 ## [0.1.0](https://github.com/SemouSky/ip-allowlist/compare/v0.0.1...v0.1.0) (2026-09-18)
 
 

@@ -78,7 +78,8 @@ state_remove_source() {
     "$(state_path "applied/${name}.hash")" \
     "$(state_path "current/${name}.ips")" \
     "$(state_path "rules/${name}.conf")" \
-    "$(state_path "status/${name}.last_run")"
+    "$(state_path "status/${name}.last_run")" \
+    "$(state_path "status/${name}.stale")"
 }
 
 # Persist the effective firewall rule parameters for a source.
@@ -114,6 +115,22 @@ state_last_run() {
   local f="$STATE_DIR/status/${name}.last_run"
   [[ -f "$f" ]] || return 0
   tr -d '[:space:]' <"$f"
+}
+
+# Stale marker: set when a source fails while a previous value is kept.
+state_mark_stale() {
+  local name="$1"
+  mkdir -p -- "$STATE_DIR/status"
+  : >"$STATE_DIR/status/${name}.stale"
+}
+
+state_clear_stale() {
+  local name="$1"
+  rm -f -- "$STATE_DIR/status/${name}.stale"
+}
+
+state_is_stale() {
+  [[ -f "$STATE_DIR/status/${name}.stale" ]]
 }
 
 # ---------------------------------------------------------------------------

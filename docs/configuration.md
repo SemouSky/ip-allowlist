@@ -4,119 +4,109 @@
 
 ## Main config: `/etc/ip-allowlist/config.conf`
 
-Format: strict `key=value`, one per line. `#` starts a comment. Values may be
-optionally quoted. There is no variable expansion and no `eval`.
+Format: strict `key=value`, one per line. `#` starts a comment, values may be
+quoted, and **unknown keys are rejected**. There is no variable expansion and no
+`eval`. Paths without a leading `/` are relative to the config file's directory
+and must not contain spaces.
+
+### Targets
 
 | Key | Values | Default | Description |
 |-----|--------|---------|-------------|
-| `schema_version` | integer | `1` | Config schema version |
-| `firewall_backend` | `nft`\|`ufw`\|`firewalld` | required | Backend to use (no auto-detect) |
-| `firewall_chain_name` | identifier | `ip-allowlist` | nft table name / base chain prefix |
-| `firewall_table_family` | `inet`\|`ip`\|`ip6` | `inet` | nft table family |
-| `firewall_firewalld_zone` | zone name | firewalld default | Target zone for the firewalld backend |
-| `allow_ports` | `any` or port list | `any` | Ports to allow from source addresses |
-| `allow_protocol` | `any`\|`tcp`\|`udp`\|`tcp+udp` | `any` | Protocols to allow from source addresses |
-| `enable_ipv4` | boolean | `true` | Apply IPv4 entries |
-| `enable_ipv6` | boolean | `true` | Apply IPv6 entries |
-| `fail2ban_enabled` | boolean | `true` | Manage the ignoreip drop-in |
-| `fail2ban_ignoreip_file` | path | `/etc/fail2ban/ip-allowlist.conf` | Drop-in to manage |
-| `paths.state_dir` | path | `/var/lib/ip-allowlist` | State directory |
-| `paths.sources_dir` | path | `/etc/ip-allowlist/sources.d` | Source config directory |
-| `paths.log_file` | path | `/var/log/ip-allowlist.log` | Log file (file targets) |
-| `logging.level` | `debug`\|`info`\|`warn`\|`error` | `info` | Minimum log level |
-| `logging.target` | `auto`\|`stdout`\|`file`\|`syslog` | `auto` | Log destination |
-| `logging.format` | `text`\|`json` | `text` | Log record format |
-| `update_interval` | seconds | `900` | Default minimum interval per source |
-| `update_on_boot` | boolean | `true` | Enable the boot oneshot service |
+| `firewall_enabled` | boolean | `true` | Master switch for the firewall target |
+| `fail2ban_enabled` | boolean | `true` | Master switch for the fail2ban target |
+| `firewall_backend` | `nft`\|`ufw`\|`firewalld` | required* | Backend (required when `firewall_enabled=true`) |
+| `allow_conflicting_firewall` | boolean | `false` | Proceed even if another manager is active |
 
-Paths may be absolute or relative to the directory containing `config.conf`.
-Path values must not contain spaces.
+`firewall_enabled=false` / `fail2ban_enabled=false` make that target a no-op: it
+is not applied and existing objects are **not** removed (use `uninstall`).
 
-## Schema version
+### Sources
 
-`schema_version` declares the config schema the file was written for. The
-current supported version is `1`.
+| Key | Values | Default | Description |
+|-----|--------|---------|-------------|
+| `sources_dir` | path | `/etc/ip-allowlist/sources.d` | Source config directory |
+| `allow_empty_sources` | boolean | `false` | Allow clearing everything when no source is active |
 
-- Missing `schema_version` is treated as the current version.
-- A value older than the current version triggers the migration path (no
-  migrations are defined yet; the step is where future ones are added).
-- A value newer than the current version is rejected with an error, so an older
-  binary cannot silently misread a newer config.
+A missing or unreadable `sources_dir` is a hard error; no cleanup is performed.
 
-## Booleans
+### Default allow rules (a source may override each)
 
-Accepted true values: `true`, `1`, `yes`, `on`.
-Accepted false values: `false`, `0`, `no`, `off`.
+| Key | Values | Default | Description |
+|-----|--------|---------|-------------|
+| `allow_ports` | `443`, `80,443`, `20000-40000`, `all` | `443` | Ports to allow |
+| `allow_protocol` | `tcp`\|`udp`\|`tcp+udp` | `tcp+udp` | Protocols (ignored when `allow_ports=all`) |
+| `enable_ipv4` / `enable_ipv6` | boolean | `true` | Address families |
+| `ipv6_required` | boolean | `false` | Fail a source when it has no IPv6 entries |
+| `http_timeout` | seconds | `15` | HTTP connect/max time |
+| `http_retries` | integer | `3` | HTTP retries |
+| `user_agent` | string | `ip-allowlist` | HTTP User-Agent |
+| `min_entries` | integer | empty → `1` | Minimum entries across enabled families |
+| `max_shrink_ratio` | 0..1 | `0.5` | Reject a result that shrinks more than this |
+
+### Schedule and self-update
+
+| Key | Values | Default | Description |
+|-----|--------|---------|-------------|
+| `update_interval` | duration | `1d` | Default per-source fetch interval |
+| `timer_interval` | duration | `15m` | systemd timer cadence |
+| `update_on_boot` | boolean | `true` | Enable the boot service |
+| `auto_update` | boolean | `false` | Automatically install a newer version |
+| `update_check_interval` | duration | `1d` | How often to check for a new version |
+| `repo` | `owner/name` | `SemouSky/ip-allowlist` | Repository used by `upgrade` |
+
+Durations accept a bare number (seconds) or an `s`/`m`/`h`/`d`/`w` suffix.
+
+### fail2ban / firewalld / paths / logging
+
+| Key | Values | Default |
+|-----|--------|---------|
+| `fail2ban_ignoreip_file` | path | `/etc/fail2ban/jail.d/zz-ip-allowlist.local` |
+| `fail2ban_merge_existing` | boolean | `true` |
+| `firewalld_zone` | zone name | firewalld default |
+| `state_dir` | path | `/var/lib/ip-allowlist` |
+| `snapshot_retention` | integer | `3` |
+| `lock_file` | path | `/run/ip-allowlist.lock` |
+| `lock_wait` | seconds | `30` |
+| `log_level` | `debug`\|`info`\|`warn`\|`error` | `info` |
+| `log_target` | comma list of `auto`\|`stdout`\|`file`\|`syslog`\|`none` | `auto` |
+| `log_file` | path | empty (required when `log_target` includes `file`) |
+| `log_format` | `text`\|`json` | `text` |
+| `schema_version` | integer | `1` |
 
 ## Source configs: `sources.d/*.conf`
 
-One file per source. The `name` key is the identity used for state and firewall
-objects; it must be unique and match `[A-Za-z0-9_-]+`.
+| Key | Values | Default |
+|-----|--------|---------|
+| `name` | `^[a-z][a-z0-9_-]{0,15}$`, unique | required |
+| `enabled` | boolean | `true` |
+| `type` | `http`\|`file` | required |
+| `urls` | space/comma separated URLs | required for `http` |
+| `paths` | space separated paths | required for `file` |
+| `format` | `text` (only value in v1) | `text` |
+| `firewall_enabled` / `fail2ban_enabled` | boolean | inherit |
+| `enable_ipv4` / `enable_ipv6` / `ipv6_required` | boolean | inherit |
+| `allow_ports` / `allow_protocol` | as above | inherit |
+| `update_interval` | duration | inherit |
+| `http_timeout` / `http_retries` / `user_agent` | as above | inherit |
+| `min_entries` / `max_shrink_ratio` | as above | inherit |
 
-| Key | Values | Default | Description |
-|-----|--------|---------|-------------|
-| `enabled` | boolean | `true` | Whether the source is active |
-| `name` | identifier | required | Unique source name |
-| `type` | `http`\|`file` | required | Source type |
-| `urls` | comma-separated URLs | — | Required for `type=http` |
-| `file_path` | path | — | Required for `type=file` |
-| `min_entries` | integer | `1` | Fail if fewer canonical entries |
-| `max_shrink_ratio` | 0..1 | `0.5` | Warn if entries shrink more than this |
-| `update_interval` | seconds | global | Per-source override |
-| `allow_ports` | `any` or port list | global | Override the main `allow_ports` |
-| `allow_protocol` | `any`\|`tcp`\|`udp`\|`tcp+udp` | global | Override the main `allow_protocol` |
-| `enable_ipv4` | boolean | global | Override the main `enable_ipv4` |
-| `enable_ipv6` | boolean | global | Override the main `enable_ipv6` |
+Unknown keys in a source file are rejected. `urls` and `paths` are mutually
+exclusive.
 
-For `type=file`, a relative `file_path` is resolved against the config
-directory. For `type=http`, only `http://` and `https://` URLs are accepted.
+## Rule parameter semantics
 
-### Disable versus delete
+- `allow_ports=all` allows every port and **ignores** `allow_protocol`.
+- A port list implies TCP and UDP when `allow_protocol` is left at its default.
+- `enable_ipv4`/`enable_ipv6` restrict the firewall only; fail2ban still gets
+  the full union.
 
-- Setting `enabled=false` removes the source from the firewall/fail2ban on the
-  next run but keeps its config file and state history.
-- Deleting the config file removes the source and its stale state on the next
-  run.
+Rendering per backend (`allow_ports=443`, `allow_protocol=tcp`):
 
-## Rule parameters
+- nft: `ip saddr @set tcp dport { 443 } accept`
+- ufw: `allow from <cidr> to any port 443 proto tcp`
+- firewalld: `rule ... source ipset="..." port port="443" protocol="tcp" accept`
 
-`allow_ports`, `allow_protocol`, `enable_ipv4` and `enable_ipv6` control what a
-source is allowed to reach. Precedence is: source config > main config >
-built-in default.
+## Precedence
 
-- `allow_ports=any` (default) allows every port from the source addresses.
-  A list such as `443`, `443,8443` or `8000-8080` narrows the rule to those
-  ports. A port list implies TCP and UDP unless `allow_protocol` says otherwise.
-- `allow_protocol=any` (default) matches all protocols when `allow_ports=any`.
-  `tcp`, `udp` or `tcp+udp` restrict the match; when a port list is set and the
-  protocol is `any`, both TCP and UDP are used.
-- `enable_ipv4` / `enable_ipv6` drop that address family from the firewall
-  (fail2ban still receives the full union).
-
-Rendering per backend:
-
-- nft: `ip saddr @set accept` for all traffic, otherwise
-  `ip saddr @set meta l4proto tcp accept` or `ip saddr @set tcp dport { 443 } accept`.
-- ufw: `allow from <cidr>`, `allow from <cidr> proto tcp`, or
-  `allow from <cidr> to any port 443 proto tcp`.
-- firewalld: `rule ... source ipset="..." accept`,
-  `... protocol value="tcp" accept`, or
-  `... port port="443" protocol="tcp" accept`.
-
-## Validation
-
-Startup fails with a clear message on invalid config. Source files with a
-missing `name`/`type`, an unknown `type`, missing `urls`/`file_path`, or
-out-of-range numeric values are rejected. `max_shrink_ratio` must be between 0
-and 1 inclusive.
-
-## Example
-
-```ini
-firewall_backend=nft
-firewall_table_family=inet
-fail2ban_enabled=true
-logging.level=info
-update_interval=900
-update_on_boot=true
-```
+CLI flags > source config > main config > built-in defaults.

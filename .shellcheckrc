@@ -14,5 +14,9 @@ disable=SC2034,SC2154
 # SC2317: unreachable command (false positives in sourced libraries).
 disable=SC2317
 
+# SC2030/SC2031: a backend module is loaded inside a subshell on purpose when
+# cleaning up a previously used backend.
+disable=SC2030,SC2031
+
 # Only fail on warnings and above; info/style are advisory for this codebase.
 severity=warning

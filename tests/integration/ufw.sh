@@ -48,12 +48,13 @@ mkdir -p "$SOURCES" "$STATE"
 
 cat >"$CONF" <<EOF
 firewall_backend=ufw
+allow_ports=all
 fail2ban_enabled=false
-paths.state_dir=$STATE
-paths.sources_dir=$SOURCES
-paths.log_file=$WS/log.txt
-logging.level=info
-logging.target=stdout
+state_dir=$STATE
+sources_dir=$SOURCES
+log_file=$WS/log.txt
+log_level=info
+log_target=stdout
 update_interval=0
 EOF
 
@@ -61,7 +62,7 @@ cat >"$SOURCES/test.conf" <<EOF
 enabled=true
 name=testv4
 type=file
-file_path=$WS/v4.txt
+paths=$WS/v4.txt
 min_entries=1
 EOF
 
@@ -97,7 +98,7 @@ cat >"$SOURCES/ports.conf" <<EOF
 enabled=true
 name=portrule
 type=file
-file_path=$WS/ports.txt
+paths=$WS/ports.txt
 min_entries=1
 allow_ports=443
 allow_protocol=tcp+udp
@@ -128,7 +129,7 @@ cat >"$SOURCES/test.conf" <<EOF
 enabled=false
 name=testv4
 type=file
-file_path=$WS/v4.txt
+paths=$WS/v4.txt
 min_entries=1
 EOF
 "$CLI" --config "$CONF" sync >"$WS/out4" 2>&1
@@ -140,12 +141,13 @@ assert_not_contains "ufw disabled source removed" "$added" "ip-allowlist:testv4"
 # ---------------------------------------------------------------------------
 cat >"$CONF" <<EOF
 firewall_backend=nft
+allow_ports=all
 fail2ban_enabled=false
-paths.state_dir=$STATE
-paths.sources_dir=$SOURCES
-paths.log_file=$WS/log.txt
-logging.level=info
-logging.target=stdout
+state_dir=$STATE
+sources_dir=$SOURCES
+log_file=$WS/log.txt
+log_level=info
+log_target=stdout
 update_interval=0
 EOF
 if "$CLI" --config "$CONF" sync >"$WS/out5" 2>&1; then
@@ -160,19 +162,20 @@ assert_contains "conflict message mentions ufw" "$(cat "$WS/out5")" "ufw is acti
 # ---------------------------------------------------------------------------
 cat >"$CONF" <<EOF
 firewall_backend=ufw
+allow_ports=all
 fail2ban_enabled=false
-paths.state_dir=$STATE
-paths.sources_dir=$SOURCES
-paths.log_file=$WS/log.txt
-logging.level=info
-logging.target=stdout
+state_dir=$STATE
+sources_dir=$SOURCES
+log_file=$WS/log.txt
+log_level=info
+log_target=stdout
 update_interval=0
 EOF
 cat >"$SOURCES/test.conf" <<EOF
 enabled=true
 name=testv4
 type=file
-file_path=$WS/v4.txt
+paths=$WS/v4.txt
 min_entries=1
 EOF
 "$CLI" --config "$CONF" sync >/dev/null 2>&1

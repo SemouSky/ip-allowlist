@@ -43,6 +43,12 @@ STATUS_CHECK=0
 UPGRADE_CHECK=0
 ASSUME_YES=0
 LOG_LEVEL_CLI=0
+ALLOW_EMPTY=0
+OFFLINE=0
+UPGRADE_VERSION=""
+FROM_TARBALL=""
+FROM_DIR=""
+SOURCE_FILTER=()
 
 usage() {
   cat <<'EOF'
@@ -51,8 +57,9 @@ ip-allowlist - manage firewall allow-lists from Cloudflare and other sources
 Usage: ip-allowlist [command] [options]
 
 Commands:
-  sync (default)   Fetch sources and apply allow-lists
-  check            Fetch sources and report changes without applying
+  sync (default, alias: run)
+                   Fetch sources and apply allow-lists
+  check            Validate config and sources, report changes without applying
   apply-offline    Apply allow-lists from cached state (no network)
   sources          List configured sources
   status           Show current status (--check for Nagios format)
@@ -64,17 +71,23 @@ Commands:
   help             Show this help
 
 Options:
-  --config FILE    Use alternative config file
-  --json           JSON output (sources, status)
-  --verbose        Enable debug logging
-  --quiet          Only warnings and errors
-  --dry-run        Show what would change without applying
-  --force          Ignore update intervals
-  --check          Nagios-style status check (status) or check-only (upgrade)
-  --purge          Remove data/state on uninstall
-  --yes            Assume yes for prompts
-  --version        Show version
-  -h, --help       Show this help
+  --config FILE      Use alternative config file
+  --source NAME      Limit sync/check/status to a source (repeatable)
+  --json             JSON output (sources, status)
+  --verbose          Enable debug logging
+  --quiet            Only warnings and errors
+  --dry-run          Show what would change without applying
+  --force            Bypass intervals, hash skip, shrink guard and conflicts
+  --allow-empty      Allow clearing everything when no source is active
+  --check            Nagios-style status check (status) or check-only (upgrade)
+  --offline          check: validate config only, no network
+  --version VER      upgrade: install a specific version
+  --from-dir DIR     upgrade: install from an unpacked tree
+  --from-tarball F   upgrade: install from a tarball
+  --purge            Remove data/state on uninstall
+  --yes              Assume yes for prompts
+  --version          Show version
+  -h, --help         Show this help
 
 Environment:
   IP_ALLOWLIST_CONFIG   Alternative config file path
@@ -85,9 +98,32 @@ EOF
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      sync|check|apply-offline|sources|status|cleanup|version|upgrade|install|uninstall|help)
-        COMMAND="$1"
+      sync|run|check|apply-offline|sources|status|cleanup|version|upgrade|install|uninstall|help)
+        case "$1" in
+          run) COMMAND="sync" ;;
+          *) COMMAND="$1" ;;
+        esac
         ;;
+      --source)
+        shift
+        [[ $# -gt 0 ]] || { err "--source requires an argument"; exit 64; }
+        SOURCE_FILTER+=("$1")
+        ;;
+      --source=*) SOURCE_FILTER+=("${1#*=}") ;;
+      --allow-empty) ALLOW_EMPTY=1 ;;
+      --offline) OFFLINE=1 ;;
+      --from-dir)
+        shift
+        [[ $# -gt 0 ]] || { err "--from-dir requires an argument"; exit 64; }
+        FROM_DIR="$1"
+        ;;
+      --from-dir=*) FROM_DIR="${1#*=}" ;;
+      --from-tarball)
+        shift
+        [[ $# -gt 0 ]] || { err "--from-tarball requires an argument"; exit 64; }
+        FROM_TARBALL="$1"
+        ;;
+      --from-tarball=*) FROM_TARBALL="${1#*=}" ;;
       --config)
         shift
         [[ $# -gt 0 ]] || { err "--config requires an argument"; exit 64; }
@@ -105,6 +141,12 @@ parse_args() {
       --purge) PURGE=1 ;;
       --yes|-y) ASSUME_YES=1 ;;
       --version) COMMAND="version" ;;
+      --version=*) UPGRADE_VERSION="${1#*=}" ;;
+      --upgrade-version)
+        shift
+        [[ $# -gt 0 ]] || { err "--upgrade-version requires an argument"; exit 64; }
+        UPGRADE_VERSION="$1"
+        ;;
       -h|--help) COMMAND="help" ;;
       *)
         err "unknown argument: $1"
@@ -158,7 +200,6 @@ load_backend() {
       NFT_FAMILY="$FIREWALL_TABLE_FAMILY"
       ;;
     firewalld)
-      FIREWALLD_ZONE="$FIREWALL_FIREWALLD_ZONE"
       ;;
   esac
 }
@@ -174,16 +215,42 @@ CONFIG_BASE_DIR=""
 STATE_DIR=""
 SOURCES_DIR=""
 BACKEND=""
+# nft object names are fixed by the plan; kept internal (not config keys).
 FIREWALL_CHAIN_NAME="ip-allowlist"
 FIREWALL_TABLE_FAMILY="inet"
-FIREWALL_FIREWALLD_ZONE=""
+
+FIREWALL_ENABLED="true"
 FAIL2BAN_ENABLED="true"
-FAIL2BAN_DROPIN="/etc/fail2ban/ip-allowlist.conf"
-UPDATE_INTERVAL=900
-DEFAULT_ALLOW_PORTS="any"
-DEFAULT_ALLOW_PROTOCOL="any"
+ALLOW_CONFLICTING_FIREWALL="false"
+ALLOW_EMPTY_SOURCES="false"
+
+FAIL2BAN_DROPIN="/etc/fail2ban/jail.d/zz-ip-allowlist.local"
+FAIL2BAN_MERGE_EXISTING="true"
+FIREWALLD_ZONE=""
+
+UPDATE_INTERVAL=86400
+TIMER_INTERVAL=900
+UPDATE_ON_BOOT="true"
+AUTO_UPDATE="false"
+UPDATE_CHECK_INTERVAL=86400
+REPO="SemouSky/ip-allowlist"
+
+SNAPSHOT_RETENTION=3
+LOCK_FILE="/run/ip-allowlist.lock"
+LOCK_WAIT=30
+
+DEFAULT_ALLOW_PORTS="443"
+DEFAULT_ALLOW_PROTOCOL="tcp+udp"
 DEFAULT_ENABLE_IPV4="true"
 DEFAULT_ENABLE_IPV6="true"
+DEFAULT_IPV6_REQUIRED="false"
+DEFAULT_HTTP_TIMEOUT=15
+DEFAULT_HTTP_RETRIES=3
+DEFAULT_USER_AGENT="ip-allowlist"
+DEFAULT_MIN_ENTRIES=""
+DEFAULT_MAX_SHRINK_RATIO="0.5"
+DEFAULT_FIREWALL_ENABLED="true"
+DEFAULT_FAIL2BAN_ENABLED="true"
 
 locate_config() {
   if [[ -n "$CONFIG_FILE" ]]; then
@@ -216,69 +283,118 @@ load_main_config() {
   CONFIG_BASE_DIR=$(cd -P "$(dirname -- "$file")" && pwd)
 
   kv_load_file MAIN "$file"
+  kv_reject_unknown MAIN "$file" \
+    schema_version firewall_enabled fail2ban_enabled firewall_backend \
+    allow_conflicting_firewall sources_dir allow_empty_sources \
+    allow_ports allow_protocol enable_ipv4 enable_ipv6 ipv6_required \
+    http_timeout http_retries user_agent min_entries max_shrink_ratio \
+    update_interval timer_interval update_on_boot auto_update \
+    update_check_interval repo fail2ban_ignoreip_file fail2ban_merge_existing \
+    firewalld_zone state_dir snapshot_retention lock_file lock_wait \
+    log_level log_target log_file log_format
+
+  FIREWALL_ENABLED=$(normalize_bool "${MAIN[firewall_enabled]:-true}")
+  validate_bool "firewall_enabled" "$FIREWALL_ENABLED" "$file"
+  FAIL2BAN_ENABLED=$(normalize_bool "${MAIN[fail2ban_enabled]:-true}")
+  validate_bool "fail2ban_enabled" "$FAIL2BAN_ENABLED" "$file"
+  ALLOW_CONFLICTING_FIREWALL=$(normalize_bool "${MAIN[allow_conflicting_firewall]:-false}")
+  validate_bool "allow_conflicting_firewall" "$ALLOW_CONFLICTING_FIREWALL" "$file"
+  ALLOW_EMPTY_SOURCES=$(normalize_bool "${MAIN[allow_empty_sources]:-false}")
+  validate_bool "allow_empty_sources" "$ALLOW_EMPTY_SOURCES" "$file"
+  UPDATE_ON_BOOT=$(normalize_bool "${MAIN[update_on_boot]:-true}")
+  validate_bool "update_on_boot" "$UPDATE_ON_BOOT" "$file"
+  AUTO_UPDATE=$(normalize_bool "${MAIN[auto_update]:-false}")
+  validate_bool "auto_update" "$AUTO_UPDATE" "$file"
+  FAIL2BAN_MERGE_EXISTING=$(normalize_bool "${MAIN[fail2ban_merge_existing]:-true}")
+  validate_bool "fail2ban_merge_existing" "$FAIL2BAN_MERGE_EXISTING" "$file"
 
   BACKEND="${MAIN[firewall_backend]:-}"
-  [[ -n "$BACKEND" ]] || die "config: firewall_backend is required (nft|ufw|firewalld)"
-  is_valid_backend "$BACKEND" || die "config: invalid firewall_backend '$BACKEND'"
-
-  FIREWALL_CHAIN_NAME="${MAIN[firewall_chain_name]:-ip-allowlist}"
-  FIREWALL_TABLE_FAMILY="${MAIN[firewall_table_family]:-inet}"
-  case "$FIREWALL_TABLE_FAMILY" in
-    inet|ip|ip6) ;;
-    *) die "config: invalid firewall_table_family '$FIREWALL_TABLE_FAMILY'" ;;
-  esac
-  [[ "$FIREWALL_CHAIN_NAME" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] \
-    || die "config: invalid firewall_chain_name '$FIREWALL_CHAIN_NAME'"
-
-  FIREWALL_FIREWALLD_ZONE="${MAIN[firewall_firewalld_zone]:-}"
-  if [[ -n "$FIREWALL_FIREWALLD_ZONE" ]]; then
-    [[ "$FIREWALL_FIREWALLD_ZONE" =~ ^[A-Za-z0-9_-]+$ ]] \
-      || die "config: invalid firewall_firewalld_zone '$FIREWALL_FIREWALLD_ZONE'"
+  if [[ "$FIREWALL_ENABLED" == "true" ]]; then
+    [[ -n "$BACKEND" ]] || die "config: firewall_backend is required when firewall_enabled=true"
+  fi
+  if [[ -n "$BACKEND" ]]; then
+    is_valid_backend "$BACKEND" || die "config: invalid firewall_backend '$BACKEND'"
   fi
 
-  FAIL2BAN_ENABLED=$(normalize_bool "${MAIN[fail2ban_enabled]:-true}")
-  FAIL2BAN_DROPIN="${MAIN[fail2ban_ignoreip_file]:-/etc/fail2ban/ip-allowlist.conf}"
-
-  local state_dir="${MAIN[paths.state_dir]:-/var/lib/ip-allowlist}"
-  local sources_dir="${MAIN[paths.sources_dir]:-/etc/ip-allowlist/sources.d}"
-  STATE_DIR=$(resolve_path "$CONFIG_BASE_DIR" "$state_dir")
-  SOURCES_DIR=$(resolve_path "$CONFIG_BASE_DIR" "$sources_dir")
-  path_has_no_spaces "$STATE_DIR" || die "config: paths.state_dir must not contain spaces"
-  path_has_no_spaces "$SOURCES_DIR" || die "config: paths.sources_dir must not contain spaces"
-
-  local log_file="${MAIN[paths.log_file]:-/var/log/ip-allowlist.log}"
-  LOG_FILE=$(resolve_path "$CONFIG_BASE_DIR" "$log_file")
-
-  LOG_TARGET="${MAIN[logging.target]:-auto}"
-  LOG_FORMAT="${MAIN[logging.format]:-text}"
-  local cfg_level="${MAIN[logging.level]:-info}"
-  # Command-line --verbose/--quiet take precedence over config.
-  if (( LOG_LEVEL_CLI == 0 )); then
-    LOG_LEVEL=$(log_level_value "$cfg_level")
-  fi
-
-  if [[ -n "${MAIN[update_interval]:-}" ]]; then
-    is_uint "${MAIN[update_interval]}" || die "config: update_interval must be an integer"
-    UPDATE_INTERVAL="${MAIN[update_interval]}"
-  fi
-
-  # Validate logging config
-  case "$LOG_TARGET" in auto|stdout|file|syslog) ;; *) die "config: invalid logging.target '$LOG_TARGET'" ;; esac
-  case "$LOG_FORMAT" in text|json) ;; *) die "config: invalid logging.format '$LOG_FORMAT'" ;; esac
-
-  # Rule parameter defaults (source configs may override).
-  local ap="${MAIN[allow_ports]:-any}"
+  local ap="${MAIN[allow_ports]:-443}"
   valid_ports_spec "$ap" || die "config: invalid allow_ports '$ap'"
   DEFAULT_ALLOW_PORTS=$(normalize_ports "$ap")
-  local apr="${MAIN[allow_protocol]:-any}"
+  local apr="${MAIN[allow_protocol]:-tcp+udp}"
   valid_protocol_spec "$apr" || die "config: invalid allow_protocol '$apr'"
   DEFAULT_ALLOW_PROTOCOL=$(normalize_protocol "$apr")
   DEFAULT_ENABLE_IPV4=$(normalize_bool "${MAIN[enable_ipv4]:-true}")
-  case "$DEFAULT_ENABLE_IPV4" in true|false) ;; *) die "config: invalid enable_ipv4 '${MAIN[enable_ipv4]}'" ;; esac
+  validate_bool "enable_ipv4" "$DEFAULT_ENABLE_IPV4" "$file"
   DEFAULT_ENABLE_IPV6=$(normalize_bool "${MAIN[enable_ipv6]:-true}")
-  case "$DEFAULT_ENABLE_IPV6" in true|false) ;; *) die "config: invalid enable_ipv6 '${MAIN[enable_ipv6]}'" ;; esac
+  validate_bool "enable_ipv6" "$DEFAULT_ENABLE_IPV6" "$file"
+  if [[ "$DEFAULT_ENABLE_IPV4" == "false" && "$DEFAULT_ENABLE_IPV6" == "false" ]]; then
+    die "config: enable_ipv4 and enable_ipv6 cannot both be false"
+  fi
+  DEFAULT_IPV6_REQUIRED=$(normalize_bool "${MAIN[ipv6_required]:-false}")
+  validate_bool "ipv6_required" "$DEFAULT_IPV6_REQUIRED" "$file"
+
+  DEFAULT_HTTP_TIMEOUT="${MAIN[http_timeout]:-15}"
+  is_uint "$DEFAULT_HTTP_TIMEOUT" || die "config: http_timeout must be a non-negative integer"
+  DEFAULT_HTTP_RETRIES="${MAIN[http_retries]:-3}"
+  is_uint "$DEFAULT_HTTP_RETRIES" || die "config: http_retries must be a non-negative integer"
+  DEFAULT_USER_AGENT="${MAIN[user_agent]:-ip-allowlist}"
+
+  DEFAULT_MIN_ENTRIES="${MAIN[min_entries]:-}"
+  [[ -z "$DEFAULT_MIN_ENTRIES" ]] || is_uint "$DEFAULT_MIN_ENTRIES" \
+    || die "config: min_entries must be a non-negative integer"
+  DEFAULT_MAX_SHRINK_RATIO="${MAIN[max_shrink_ratio]:-0.5}"
+  [[ "$DEFAULT_MAX_SHRINK_RATIO" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]] \
+    || die "config: max_shrink_ratio must be between 0 and 1"
+
+  UPDATE_INTERVAL=$(parse_duration "${MAIN[update_interval]:-1d}")
+  TIMER_INTERVAL=$(parse_duration "${MAIN[timer_interval]:-15m}")
+  UPDATE_CHECK_INTERVAL=$(parse_duration "${MAIN[update_check_interval]:-1d}")
+
+  REPO="${MAIN[repo]:-SemouSky/ip-allowlist}"
+  [[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "config: invalid repo '$REPO'"
+
+  FAIL2BAN_DROPIN="${MAIN[fail2ban_ignoreip_file]:-/etc/fail2ban/jail.d/zz-ip-allowlist.local}"
+  FIREWALLD_ZONE="${MAIN[firewalld_zone]:-}"
+  if [[ -n "$FIREWALLD_ZONE" ]]; then
+    [[ "$FIREWALLD_ZONE" =~ ^[A-Za-z0-9_-]+$ ]] || die "config: invalid firewalld_zone '$FIREWALLD_ZONE'"
+  fi
+
+  STATE_DIR=$(resolve_path "$CONFIG_BASE_DIR" "${MAIN[state_dir]:-/var/lib/ip-allowlist}")
+  SOURCES_DIR=$(resolve_path "$CONFIG_BASE_DIR" "${MAIN[sources_dir]:-/etc/ip-allowlist/sources.d}")
+  path_has_no_spaces "$STATE_DIR" || die "config: state_dir must not contain spaces"
+  path_has_no_spaces "$SOURCES_DIR" || die "config: sources_dir must not contain spaces"
+
+  local lf="${MAIN[log_file]:-}"
+  if [[ -n "$lf" ]]; then
+    LOG_FILE=$(resolve_path "$CONFIG_BASE_DIR" "$lf")
+    path_has_no_spaces "$LOG_FILE" || die "config: log_file must not contain spaces"
+  else
+    LOG_FILE=""
+  fi
+
+  SNAPSHOT_RETENTION="${MAIN[snapshot_retention]:-3}"
+  is_uint "$SNAPSHOT_RETENTION" || die "config: snapshot_retention must be a non-negative integer"
+  LOCK_FILE=$(resolve_path "$CONFIG_BASE_DIR" "${MAIN[lock_file]:-/run/ip-allowlist.lock}")
+  path_has_no_spaces "$LOCK_FILE" || die "config: lock_file must not contain spaces"
+  LOCK_WAIT="${MAIN[lock_wait]:-30}"
+  is_uint "$LOCK_WAIT" || die "config: lock_wait must be a non-negative integer"
+
+  LOG_TARGET="${MAIN[log_target]:-auto}"
+  LOG_FORMAT="${MAIN[log_format]:-text}"
+  case "$LOG_FORMAT" in text|json) ;; *) die "config: invalid log_format '$LOG_FORMAT'" ;; esac
+  if (( LOG_LEVEL_CLI == 0 )); then
+    local lvl="${MAIN[log_level]:-info}"
+    case "$lvl" in debug|info|warn|error) ;; *) die "config: invalid log_level '$lvl'" ;; esac
+    LOG_LEVEL=$(log_level_value "$lvl")
+  fi
+  log_configure_targets
 
   validate_schema_version
+}
+
+# Validate a normalized boolean value.
+validate_bool() {
+  local key="$1" value="$2" file="$3"
+  case "$value" in true|false) ;; *) die "config: invalid $key in $file" ;; esac
 }
 
 # Apply config schema migrations and reject configs from newer versions.
@@ -305,28 +421,17 @@ validate_schema_version() {
 
 setup_logging() {
   RUN_ID="$(date +%s)-$$"
-  case "$LOG_TARGET" in
-    file)
-      mkdir -p -- "$(dirname -- "$LOG_FILE")" 2>/dev/null || true
-      if ! touch "$LOG_FILE" 2>/dev/null; then
-        err "WARN: cannot write log file $LOG_FILE, falling back to stdout"
-        LOG_TARGET="stdout"
-        LOG_FILE=""
-      fi
-      ;;
-    auto)
-      if [[ ! -t 1 && -n "$LOG_FILE" ]]; then
-        mkdir -p -- "$(dirname -- "$LOG_FILE")" 2>/dev/null || true
-        touch "$LOG_FILE" 2>/dev/null || LOG_FILE=""
-      fi
-      ;;
-    syslog)
-      if ! have logger; then
-        err "WARN: logging.target=syslog but 'logger' is not available, falling back to stdout"
-        LOG_TARGET="stdout"
-      fi
-      ;;
-  esac
+  if (( LOG_EMIT_FILE == 1 )) && [[ -n "$LOG_FILE" ]]; then
+    mkdir -p -- "$(dirname -- "$LOG_FILE")" 2>/dev/null || true
+    if ! touch "$LOG_FILE" 2>/dev/null; then
+      err "WARN: cannot write log file $LOG_FILE, disabling file logging"
+      LOG_EMIT_FILE=0
+    fi
+  fi
+  if (( LOG_EMIT_SYSLOG == 1 )) && ! have logger; then
+    err "WARN: log_target includes syslog but 'logger' is not available"
+    LOG_EMIT_SYSLOG=0
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -343,22 +448,29 @@ firewalld_active() {
   firewall-cmd --state >/dev/null 2>&1
 }
 
-# Reject mismatched active firewall managers.
+# Reject mismatched active firewall managers, unless overridden by
+# allow_conflicting_firewall=true or --force.
 firewall_check_conflicts() {
   local configured="$1"
   local u=0 f=0
   ufw_active && u=1
   firewalld_active && f=1
 
+  local conflict=""
   if (( u == 1 && f == 1 )); then
-    die "both ufw and firewalld are active; disable one before using ip-allowlist"
+    conflict="both ufw and firewalld are active"
+  elif (( u == 1 )) && [[ "$configured" != "ufw" ]]; then
+    conflict="ufw is active but firewall_backend=$configured"
+  elif (( f == 1 )) && [[ "$configured" != "firewalld" ]]; then
+    conflict="firewalld is active but firewall_backend=$configured"
   fi
-  if (( u == 1 )) && [[ "$configured" != "ufw" ]]; then
-    die "ufw is active but firewall_backend=$configured; set firewall_backend=ufw or disable ufw"
+  [[ -n "$conflict" ]] || return 0
+
+  if [[ "$ALLOW_CONFLICTING_FIREWALL" == "true" || "${FORCE:-0}" -eq 1 ]]; then
+    log_warn "firewall conflict overridden: $conflict"
+    return 0
   fi
-  if (( f == 1 )) && [[ "$configured" != "firewalld" ]]; then
-    die "firewalld is active but firewall_backend=$configured; set firewall_backend=firewalld or disable firewalld"
-  fi
+  die "$conflict; set firewall_backend accordingly, or allow_conflicting_firewall=true / --force"
 }
 
 # ---------------------------------------------------------------------------
@@ -482,6 +594,24 @@ load_sources() {
     s[enable_ipv6]=$(normalize_bool "${s[enable_ipv6]}")
     case "${s[enable_ipv6]}" in true|false) ;; *) die "source $f: invalid enable_ipv6 '${s[enable_ipv6]}'" ;; esac
 
+    if [[ -z "${s[ipv6_required]:-}" ]]; then s[ipv6_required]="$DEFAULT_IPV6_REQUIRED"; fi
+    s[ipv6_required]=$(normalize_bool "${s[ipv6_required]}")
+    case "${s[ipv6_required]}" in true|false) ;; *) die "source $f: invalid ipv6_required" ;; esac
+
+    if [[ -z "${s[firewall_enabled]:-}" ]]; then s[firewall_enabled]="$DEFAULT_FIREWALL_ENABLED"; fi
+    s[firewall_enabled]=$(normalize_bool "${s[firewall_enabled]}")
+    case "${s[firewall_enabled]}" in true|false) ;; *) die "source $f: invalid firewall_enabled" ;; esac
+
+    if [[ -z "${s[fail2ban_enabled]:-}" ]]; then s[fail2ban_enabled]="$DEFAULT_FAIL2BAN_ENABLED"; fi
+    s[fail2ban_enabled]=$(normalize_bool "${s[fail2ban_enabled]}")
+    case "${s[fail2ban_enabled]}" in true|false) ;; *) die "source $f: invalid fail2ban_enabled" ;; esac
+
+    if [[ -z "${s[http_timeout]:-}" ]]; then s[http_timeout]="$DEFAULT_HTTP_TIMEOUT"; fi
+    if [[ -z "${s[http_retries]:-}" ]]; then s[http_retries]="$DEFAULT_HTTP_RETRIES"; fi
+    if [[ -z "${s[user_agent]:-}" ]]; then s[user_agent]="$DEFAULT_USER_AGENT"; fi
+    if [[ -z "${s[min_entries]:-}" ]]; then s[min_entries]="${DEFAULT_MIN_ENTRIES:-1}"; fi
+    if [[ -z "${s[max_shrink_ratio]:-}" ]]; then s[max_shrink_ratio]="$DEFAULT_MAX_SHRINK_RATIO"; fi
+
     if [[ -n "${SOURCES[$name]:-}" ]]; then
       die "duplicate source name '$name' (in $f and ${SOURCES[$name]})"
     fi
@@ -509,6 +639,29 @@ source_ref() {
   printf 'SRC_%s' "${name//-/_}"
 }
 
+# True when a source is selected by --source (or no filter was given).
+source_selected() {
+  (( ${#SOURCE_FILTER[@]} == 0 )) && return 0
+  local n
+  for n in "${SOURCE_FILTER[@]}"; do
+    [[ "$n" == "$1" ]] && return 0
+  done
+  return 1
+}
+
+# Validate --source filters against configured sources.
+validate_source_filter() {
+  local sel name found
+  for sel in "${SOURCE_FILTER[@]:-}"; do
+    [[ -n "$sel" ]] || continue
+    found=0
+    for name in "${SOURCE_NAMES[@]}"; do
+      [[ "$name" == "$sel" ]] && { found=1; break; }
+    done
+    (( found == 1 )) || die "unknown source '--source $sel'"
+  done
+}
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -522,9 +675,41 @@ cmd_version() {
 }
 
 cmd_sync() {
-  firewall_check_conflicts "$BACKEND"
-  backend_validate
+  [[ -d "$SOURCES_DIR" ]] || die "sources dir not found or unreadable: $SOURCES_DIR"
   state_init "$STATE_DIR"
+
+  # Determine ready targets. A target that is not available is skipped with a
+  # warning; if every target is skipped the run is a no-op and exits 0.
+  local firewall_ready=0 fail2ban_ready=0
+  if [[ "$FIREWALL_ENABLED" == "true" ]]; then
+    firewall_ready=1
+    case "$BACKEND" in
+      nft) nft_available || { log_warn "nft is not available; skipping firewall target"; firewall_ready=0; } ;;
+      ufw) ufw_available || { log_warn "ufw is not available; skipping firewall target"; firewall_ready=0; } ;;
+      firewalld) { firewalld_available && firewalld_running; } \
+        || { log_warn "firewalld is not running; skipping firewall target"; firewall_ready=0; } ;;
+    esac
+    if (( firewall_ready == 1 )); then
+      firewall_check_conflicts "$BACKEND"
+    fi
+  else
+    log_debug "firewall_enabled=false; skipping firewall target"
+  fi
+
+  if [[ "$FAIL2BAN_ENABLED" == "true" ]]; then
+    fail2ban_ready=1
+    if [[ ! -d "$(dirname -- "$FAIL2BAN_DROPIN")" ]]; then
+      log_warn "fail2ban drop-in directory $(dirname -- "$FAIL2BAN_DROPIN") missing; skipping fail2ban target"
+      fail2ban_ready=0
+    fi
+  else
+    log_debug "fail2ban_enabled=false; skipping fail2ban target"
+  fi
+
+  if (( firewall_ready == 0 && fail2ban_ready == 0 )); then
+    log_info "no ready targets; nothing to do"
+    return 0
+  fi
 
   # Capture what the previous run recorded before any state is overwritten.
   local prev_backend prev_firewalld_zone prev_dropin
@@ -532,7 +717,7 @@ cmd_sync() {
   prev_firewalld_zone=$(state_get_key "firewall.firewalld-zone")
   prev_dropin=$(state_get_key "fail2ban.ignoreip-file")
 
-  lock_acquire "$STATE_DIR/.lock"
+  lock_acquire "$LOCK_FILE"
 
   if state_in_progress; then
     log_warn "previous run did not complete; recovering from last known-good state"
@@ -547,6 +732,23 @@ cmd_sync() {
     state_clear_in_progress
   fi
 
+  validate_source_filter
+
+  # Safety guard: refuse to clear everything when no source is active unless
+  # explicitly allowed.
+  local active_count=0 cname
+  for cname in "${SOURCE_NAMES[@]}"; do
+    local cref
+    cref=$(source_ref "$cname")
+    local -n csrc="$cref"
+    [[ "${csrc[enabled]}" == "true" ]] || continue
+    source_selected "$cname" || continue
+    active_count=$(( active_count + 1 ))
+  done
+  if (( active_count == 0 )) && [[ "$ALLOW_EMPTY_SOURCES" != "true" && $ALLOW_EMPTY -eq 0 ]]; then
+    die "no active sources; refusing to clear existing rules (set allow_empty_sources=true or use --allow-empty)"
+  fi
+
   state_mark_in_progress
 
   local changed_names=()
@@ -557,6 +759,11 @@ cmd_sync() {
     local ref
     ref=$(source_ref "$name")
     local -n src="$ref"
+
+    if ! source_selected "$name"; then
+      log_debug "source $name: not selected by --source, preserving"
+      continue
+    fi
 
     if [[ "${src[enabled]}" != "true" ]]; then
       if [[ -f "$STATE_DIR/current/${name}.ips" || -f "$STATE_DIR/rules/${name}.conf" ]]; then
@@ -579,12 +786,14 @@ cmd_sync() {
 
     local new_hash old_hash count
     if ! source_process "$ref" "$STATE_DIR" "$CONFIG_BASE_DIR"; then
-      log_error "source $name: processing failed"
+      log_error "source $name: processing failed; keeping previous values"
+      state_mark_stale "$name"
       failures=$(( failures + 1 ))
       continue
     fi
     count="${src[_entries]}"
     state_mark_run "$name"
+    state_clear_stale "$name"
     state_write_rule_spec "$name" "${src[allow_ports]}" "${src[allow_protocol]}" \
       "${src[enable_ipv4]}" "${src[enable_ipv6]}"
 
@@ -601,22 +810,26 @@ cmd_sync() {
     fi
   done
 
-  # Remove stale state for sources no longer present in the config.
+  # Remove stale state for sources no longer present in the config. A partial
+  # run (--source) preserves every unselected source, so orphans are not
+  # considered.
   local current_file orphan known
-  for current_file in "$STATE_DIR"/current/*.ips; do
-    [[ -e "$current_file" ]] || continue
-    orphan=$(basename -- "$current_file" .ips)
-    known=0
-    for name in "${SOURCE_NAMES[@]}"; do
-      if [[ "$name" == "$orphan" ]]; then known=1; break; fi
+  if (( ${#SOURCE_FILTER[@]} == 0 )); then
+    for current_file in "$STATE_DIR"/current/*.ips; do
+      [[ -e "$current_file" ]] || continue
+      orphan=$(basename -- "$current_file" .ips)
+      known=0
+      for name in "${SOURCE_NAMES[@]}"; do
+        if [[ "$name" == "$orphan" ]]; then known=1; break; fi
+      done
+      if (( known == 0 )); then
+        log_info "source $orphan: no longer configured, removing from firewall"
+        rm -f -- "$current_file"
+        state_remove_source "$orphan"
+        needs_apply=1
+      fi
     done
-    if (( known == 0 )); then
-      log_info "source $orphan: no longer configured, removing from firewall"
-      rm -f -- "$current_file"
-      state_remove_source "$orphan"
-      needs_apply=1
-    fi
-  done
+  fi
 
   # A backend change requires a rebuild so the new backend gets the allow-list.
   local backend_changed=0
@@ -635,7 +848,7 @@ cmd_sync() {
     printf 'backend=%s\n' "$BACKEND"
     printf 'chain=%s\n' "$FIREWALL_CHAIN_NAME"
     printf 'family=%s\n' "$FIREWALL_TABLE_FAMILY"
-    printf 'zone=%s\n' "$FIREWALL_FIREWALLD_ZONE"
+    printf 'zone=%s\n' "$FIREWALLD_ZONE"
     printf 'fail2ban_enabled=%s\n' "$FAIL2BAN_ENABLED"
     printf 'fail2ban_file=%s\n' "$FAIL2BAN_DROPIN"
     for fpname in "${SOURCE_NAMES[@]}"; do
@@ -655,7 +868,9 @@ cmd_sync() {
     log_debug "desired firewall state changed"
   fi
 
-  if (( needs_apply == 1 )); then
+  if (( firewall_ready == 0 )); then
+    log_info "firewall target skipped; firewall unchanged"
+  elif (( needs_apply == 1 )); then
     local snap
     snap=$(tmpfile "backend-snap")
     log_debug "snapshotting current backend state"
@@ -687,7 +902,7 @@ cmd_sync() {
     log_info "no source changes; firewall unchanged"
   fi
 
-  if [[ "$FAIL2BAN_ENABLED" == "true" ]]; then
+  if (( fail2ban_ready == 1 )); then
     if [[ -n "$prev_dropin" && "$prev_dropin" != "$FAIL2BAN_DROPIN" && -f "$prev_dropin" ]]; then
       log_info "fail2ban: drop-in path changed, removing old $prev_dropin"
       rm -f -- "$prev_dropin"
@@ -709,14 +924,25 @@ cmd_sync() {
 
 cmd_check() {
   state_init "$STATE_DIR"
+  validate_source_filter
   local any_changed=0 failures=0 name
   local -a changed=()
+
+  if (( OFFLINE == 1 )); then
+    if (( JSON_OUT == 1 )); then
+      printf '{"offline":true,"valid":true,"sources":%s}\n' "${#SOURCE_NAMES[@]}"
+    else
+      out "config valid ($((${#SOURCE_NAMES[@]})) sources); offline mode, no network access"
+    fi
+    return 0
+  fi
 
   for name in "${SOURCE_NAMES[@]}"; do
     local ref
     ref=$(source_ref "$name")
     local -n src="$ref"
     [[ "${src[enabled]}" == "true" ]] || continue
+    source_selected "$name" || continue
 
     local canonical count new_hash old_hash
     canonical=$(tmpfile "check-canon-${name}")
@@ -780,7 +1006,7 @@ cmd_apply_offline() {
   prev_firewalld_zone=$(state_get_key "firewall.firewalld-zone")
   prev_dropin=$(state_get_key "fail2ban.ignoreip-file")
 
-  lock_acquire "$STATE_DIR/.lock"
+  lock_acquire "$LOCK_FILE"
 
   if ! backend_apply; then
     log_error "failed to apply firewall rules"
@@ -803,7 +1029,7 @@ cmd_apply_offline() {
 cmd_cleanup() {
   backend_validate
   state_init "$STATE_DIR"
-  lock_acquire "$STATE_DIR/.lock"
+  lock_acquire "$LOCK_FILE"
   backend_cleanup
   # Invalidate applied hashes so the next sync rebuilds the allow-list.
   rm -f -- "$STATE_DIR"/applied/*.hash
@@ -814,37 +1040,56 @@ cmd_cleanup() {
 }
 
 cmd_sources() {
+  validate_source_filter
   if (( JSON_OUT == 1 )); then
     printf '['
     local first=1 name
     for name in "${SOURCE_NAMES[@]}"; do
+      source_selected "$name" || continue
       local ref
       ref=$(source_ref "$name")
       local -n src="$ref"
+      local interval due stale last
+      interval="${src[update_interval]:-$UPDATE_INTERVAL}"
+      due=false
+      source_is_due "$STATE_DIR" "$name" "$interval" && due=true
+      stale=false
+      state_is_stale "$name" && stale=true
+      last="$(state_last_run "$name")"
       (( first == 1 )) || printf ','
       first=0
-      printf '{"name":"%s","enabled":%s,"type":"%s","min_entries":%s,' \
-        "$(json_escape "$name")" "${src[enabled]}" "${src[type]}" "${src[min_entries]}"
-      if [[ "${src[type]}" == "http" ]]; then
-        printf '"urls":"%s"}' "$(json_escape "${src[urls]}")"
-      else
-        printf '"file_path":"%s"}' "$(json_escape "${src[file_path]}")"
-      fi
+      printf '{"name":"%s","enabled":%s,"type":"%s","allow_ports":"%s","allow_protocol":"%s","enable_ipv4":%s,"enable_ipv6":%s,"due":%s,"stale":%s,"last_success":"%s","target":"%s"}' \
+        "$(json_escape "$name")" "${src[enabled]}" "${src[type]}" \
+        "$(json_escape "${src[allow_ports]}")" "$(json_escape "${src[allow_protocol]}")" \
+        "${src[enable_ipv4]}" "${src[enable_ipv6]}" "$due" "$stale" "$last" \
+        "$(json_escape "$(source_target "$ref")")"
     done
     printf ']\n'
     return 0
   fi
 
-  printf '%-20s %-8s %-6s %-10s %s\n' "NAME" "ENABLED" "TYPE" "MIN" "TARGET"
+  printf '%-16s %-8s %-6s %-6s %-7s %-16s %s\n' "NAME" "ENABLED" "TYPE" "DUE" "STATUS" "LAST SUCCESS" "TARGET"
   local name
   for name in "${SOURCE_NAMES[@]}"; do
+    source_selected "$name" || continue
     local ref
     ref=$(source_ref "$name")
     local -n src="$ref"
-    local target
-    target=$(source_target "$ref")
-    printf '%-20s %-8s %-6s %-10s %s\n' \
-      "$name" "${src[enabled]}" "${src[type]}" "${src[min_entries]}" "$target"
+    local interval due stale status last
+    interval="${src[update_interval]:-$UPDATE_INTERVAL}"
+    due="no"
+    source_is_due "$STATE_DIR" "$name" "$interval" && due="yes"
+    status="ok"
+    if state_is_stale "$name"; then status="stale"; fi
+    if [[ -z "${src[enabled]}" || "${src[enabled]}" != "true" ]]; then status="disabled"; fi
+    last="$(state_last_run "$name")"
+    if [[ -n "$last" ]]; then
+      last=$(date -u -d "@$last" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "$last")
+    else
+      last="never"
+    fi
+    printf '%-16s %-8s %-6s %-6s %-7s %-16s %s\n' \
+      "$name" "${src[enabled]}" "${src[type]}" "$due" "$status" "$last" "$(source_target "$ref")"
   done
 }
 
@@ -855,6 +1100,7 @@ cmd_status() {
   backend_state=$(backend_status)
 
   if [[ $STATUS_CHECK -eq 1 ]]; then
+    validate_source_filter
     local issues=0 name
     local enabled_count=0
     for name in "${SOURCE_NAMES[@]}"; do
@@ -862,7 +1108,16 @@ cmd_status() {
       ref=$(source_ref "$name")
       local -n src="$ref"
       [[ "${src[enabled]}" == "true" ]] || continue
+      source_selected "$name" || continue
       enabled_count=$(( enabled_count + 1 ))
+      if state_is_stale "$name"; then
+        log_error "CRITICAL: source $name is stale (last fetch failed)"
+        (( issues < 2 )) && issues=2
+      fi
+      if [[ -z "$(state_last_run "$name")" ]]; then
+        log_error "CRITICAL: source $name has never succeeded"
+        (( issues < 2 )) && issues=2
+      fi
       local current="$STATE_DIR/current/${name}.ips"
       if [[ ! -f "$current" ]]; then
         log_error "CRITICAL: source $name has no applied state"
@@ -871,21 +1126,21 @@ cmd_status() {
       fi
       local entries
       entries=$(count_lines "$current")
-      local min="${src[min_entries]}"
+      local min="${src[min_entries]:-1}"
       if (( entries < min )); then
         log_error "CRITICAL: source $name has $entries entries (< min_entries=$min)"
         (( issues < 2 )) && issues=2
       fi
-      if state_in_progress; then
-        log_error "WARNING: a run is in progress or was interrupted"
-        (( issues < 1 )) && issues=1
-      fi
     done
+    if state_in_progress; then
+      log_error "WARNING: a run is in progress or was interrupted"
+      (( issues < 1 )) && issues=1
+    fi
     if (( enabled_count == 0 )); then
       err "WARNING: no enabled sources"
       (( issues < 1 )) && issues=1
     fi
-    if [[ "$backend_state" == "inactive" ]]; then
+    if [[ "$FIREWALL_ENABLED" == "true" && "$backend_state" == "inactive" ]]; then
       err "WARNING: firewall table inactive"
       (( issues < 1 )) && issues=1
     fi
@@ -957,7 +1212,7 @@ cmd_status() {
 }
 
 cmd_upgrade() {
-  local repo="SemouSky/ip-allowlist"
+  local repo="$REPO"
   local api="https://api.github.com/repos/${repo}/releases/latest"
   local latest
   if ! latest=$(http_fetch "$api" 2>/dev/null | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n1 | sed 's/.*"\([^"]*\)"$/\1/'); then

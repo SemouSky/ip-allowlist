@@ -313,21 +313,18 @@ normalize_protocol() {
 
 # Print the L4 protocols a rule must match, space separated.
 # Empty output means "match all traffic" (no protocol restriction).
+# Per the plan, allow_ports=all ("any") ignores allow_protocol entirely.
 # Usage: effective_protocols <normalized_protocol> <normalized_ports>
 effective_protocols() {
   local protocol="$1" ports="$2"
   if [[ "$ports" == "any" ]]; then
-    case "$protocol" in
-      any) printf '' ;;
-      tcp+udp) printf 'tcp udp' ;;
-      *) printf '%s' "$protocol" ;;
-    esac
-  else
-    case "$protocol" in
-      any|tcp+udp) printf 'tcp udp' ;;
-      *) printf '%s' "$protocol" ;;
-    esac
+    printf ''
+    return 0
   fi
+  case "$protocol" in
+    any|tcp+udp) printf 'tcp udp' ;;
+    *) printf '%s' "$protocol" ;;
+  esac
 }
 
 # Replace range separators for ufw (uses "lo:hi").
@@ -452,12 +449,22 @@ ipv4_merge_cidrs() {
 
 # Read raw/candidate text from stdin and write canonical entries to stdout.
 # Output: sorted, deduplicated, one entry per line. IPv4 entries merged.
+# With "strict" a single invalid token fails the whole stream (used for
+# source data); the default ignores invalid tokens (used for user fail2ban
+# ignoreip values).
+# Usage: canonicalize_stream [strict]
 canonicalize_stream() {
+  local mode="${1:-lenient}"
   local line token
   local -a v4=() v6=() v6sort=()
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line%$'\r'}"
+    line=$(trim "$line")
+    [[ -z "$line" ]] && continue
+    [[ "$line" == \#* ]] && continue
+    # Allow "ip # comment".
+    line="${line%%#*}"
     line=$(trim "$line")
     [[ -z "$line" ]] && continue
     local -a toks=()
@@ -469,6 +476,9 @@ canonicalize_stream() {
         *:*)
           if valid_ipv6_cidr "$token"; then
             v6+=("$(ipv6_cidr_normalize "$token")")
+          elif [[ "$mode" == "strict" ]]; then
+            log_error "invalid IPv6 entry: $token"
+            return 1
           else
             log_debug "ignoring invalid IPv6 entry: $token"
           fi
@@ -476,11 +486,18 @@ canonicalize_stream() {
         *.*)
           if valid_ipv4_cidr "$token"; then
             v4+=("$(ipv4_cidr_normalize "$token")")
+          elif [[ "$mode" == "strict" ]]; then
+            log_error "invalid IPv4 entry: $token"
+            return 1
           else
             log_debug "ignoring invalid IPv4 entry: $token"
           fi
           ;;
         *)
+          if [[ "$mode" == "strict" ]]; then
+            log_error "invalid entry: $token"
+            return 1
+          fi
           log_debug "ignoring unrecognized entry: $token"
           ;;
       esac
@@ -524,51 +541,74 @@ count_lines() {
 # ---------------------------------------------------------------------------
 
 # Load a source config file into the named associative array.
-# Applies defaults and validates required keys.
+# Applies defaults, rejects unknown keys, and validates values.
 # Usage: source_load_config <array_name> <file>
 source_load_config() {
   local -n _src="$1"
   local file="$2"
   _src=()
   kv_load_file "$1" "$file"
-
-  # Defaults
-  _src[enabled]="${_src[enabled]:-true}"
-  _src[min_entries]="${_src[min_entries]:-1}"
-  _src[max_shrink_ratio]="${_src[max_shrink_ratio]:-0.5}"
+  kv_reject_unknown "$1" "$file" \
+    name enabled type urls paths format \
+    enable_ipv4 enable_ipv6 ipv6_required allow_ports allow_protocol \
+    firewall_enabled fail2ban_enabled update_interval \
+    http_timeout http_retries user_agent min_entries max_shrink_ratio
 
   local name="${_src[name]:-}"
   local type="${_src[type]:-}"
 
   [[ -n "$name" ]] || die "source $file: missing required key 'name'"
-  [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || die "source $file: invalid name '$name' (use letters, digits, _ and -)"
+  [[ "$name" =~ ^[a-z][a-z0-9_-]{0,15}$ ]] \
+    || die "source $file: invalid name '$name' (must match ^[a-z][a-z0-9_-]{0,15}\$)"
   [[ -n "$type" ]] || die "source $file: missing required key 'type'"
   case "$type" in
     http|file) ;;
     *) die "source $file: invalid type '$type' (expected http or file)" ;;
   esac
 
-  _src[enabled]=$(normalize_bool "${_src[enabled]}")
+  local fmt="${_src[format]:-text}"
+  [[ "$fmt" == "text" ]] || die "source $file: unsupported format '$fmt' (v1 supports text)"
+
+  _src[enabled]=$(normalize_bool "${_src[enabled]:-true}")
   case "${_src[enabled]}" in
     true|false) ;;
     *) die "source $file: invalid enabled value '${_src[enabled]}'" ;;
   esac
 
-  is_uint "${_src[min_entries]}" || die "source $file: min_entries must be a non-negative integer"
-  [[ "${_src[max_shrink_ratio]}" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]] \
-    || die "source $file: max_shrink_ratio must be between 0 and 1"
-  if [[ -n "${_src[update_interval]:-}" ]]; then
-    is_uint "${_src[update_interval]}" || die "source $file: update_interval must be a non-negative integer"
+  local urls="${_src[urls]:-}" paths="${_src[paths]:-}"
+  if [[ "$type" == "http" ]]; then
+    [[ -n "$urls" ]] || die "source $file: http source requires 'urls'"
+    [[ -z "$paths" ]] || die "source $file: 'paths' is only valid for file sources"
+  else
+    [[ -n "$paths" ]] || die "source $file: file source requires 'paths'"
+    [[ -z "$urls" ]] || die "source $file: 'urls' is only valid for http sources"
   fi
 
-  case "$type" in
-    http)
-      [[ -n "${_src[urls]:-}" ]] || die "source $file: http source requires 'urls'"
-      ;;
-    file)
-      [[ -n "${_src[file_path]:-}" ]] || die "source $file: file source requires 'file_path'"
-      ;;
-  esac
+  local k v
+  for k in enable_ipv4 enable_ipv6 firewall_enabled fail2ban_enabled ipv6_required; do
+    [[ -n "${_src[$k]:-}" ]] || continue
+    v=$(normalize_bool "${_src[$k]}")
+    case "$v" in true|false) ;; *) die "source $file: invalid $k '${_src[$k]}'" ;; esac
+    _src["$k"]="$v"
+  done
+
+  [[ -z "${_src[allow_ports]:-}" ]] || valid_ports_spec "${_src[allow_ports]}" \
+    || die "source $file: invalid allow_ports '${_src[allow_ports]}'"
+  [[ -z "${_src[allow_protocol]:-}" ]] || valid_protocol_spec "${_src[allow_protocol]}" \
+    || die "source $file: invalid allow_protocol '${_src[allow_protocol]}'"
+
+  [[ -z "${_src[min_entries]:-}" ]] || is_uint "${_src[min_entries]}" \
+    || die "source $file: min_entries must be a non-negative integer"
+  [[ -z "${_src[max_shrink_ratio]:-}" ]] || [[ "${_src[max_shrink_ratio]}" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]] \
+    || die "source $file: max_shrink_ratio must be between 0 and 1"
+  [[ -z "${_src[http_timeout]:-}" ]] || is_uint "${_src[http_timeout]}" \
+    || die "source $file: http_timeout must be a non-negative integer"
+  [[ -z "${_src[http_retries]:-}" ]] || is_uint "${_src[http_retries]}" \
+    || die "source $file: http_retries must be a non-negative integer"
+
+  if [[ -n "${_src[update_interval]:-}" ]]; then
+    _src[update_interval]=$(parse_duration "${_src[update_interval]}")
+  fi
 
   _src[source_file]="$file"
 }
@@ -599,7 +639,7 @@ source_fetch() {
   case "$type" in
     http)
       local -a urls=()
-      local IFS=','
+      local IFS=$' ,'
       read -ra urls <<<"$target"
       local url
       for url in "${urls[@]}"; do
@@ -618,14 +658,21 @@ source_fetch() {
       done
       ;;
     file)
+      local -a paths=()
+      read -ra paths <<<"$target"
       local path
-      path=$(resolve_path "$base_dir" "$target")
-      if [[ ! -f "$path" ]]; then
-        log_error "source file not found: $path"
-        return 1
-      fi
-      log_debug "reading $path"
-      cat -- "$path"
+      for path in "${paths[@]}"; do
+        [[ -z "$path" ]] && continue
+        local resolved
+        resolved=$(resolve_path "$base_dir" "$path")
+        if [[ ! -f "$resolved" ]]; then
+          log_error "source file not found: $resolved"
+          return 1
+        fi
+        log_debug "reading $resolved"
+        cat -- "$resolved" || return 1
+        printf '\n'
+      done
       ;;
     *)
       log_error "unsupported source type: $type"
@@ -643,7 +690,7 @@ source_target() {
   if [[ "${_st[type]}" == "http" ]]; then
     printf '%s' "${_st[urls]}"
   else
-    printf '%s' "${_st[file_path]}"
+    printf '%s' "${_st[paths]}"
   fi
 }
 
@@ -651,8 +698,23 @@ source_target() {
 # Source processing
 # ---------------------------------------------------------------------------
 
+# Reject a family whose entries shrank beyond the ratio.
+# Usage: shrink_rejected <name> <family> <old> <new> <ratio>
+shrink_rejected() {
+  local name="$1" fam="$2" old="$3" new="$4" ratio="$5"
+  (( old > 0 && new > 0 )) || return 1
+  (( new < old )) || return 1
+  local r
+  r=$(awk -v n="$new" -v o="$old" 'BEGIN { printf "%.4f", (o - n) / o }')
+  if awk -v r="$r" -v m="$ratio" 'BEGIN { exit !(r > m) }'; then
+    log_error "source $name: $fam entries shrank ${r} (${old} -> ${new}), exceeds max_shrink_ratio=$ratio"
+    return 0
+  fi
+  return 1
+}
+
 # Fetch, canonicalize, and validate one source, writing canonical entries to
-# <out_file>. Compares against <old_file> (if present) for shrink warnings.
+# <out_file>. Enforces min_entries (over enabled families) and the shrink guard.
 # Returns non-zero on any per-source failure; callers decide how to handle it.
 # Usage: source_build <array_name> <base_dir> <out_file> <old_file>
 # shellcheck disable=SC2178
@@ -660,6 +722,7 @@ source_build() {
   local -n _sb="$1"
   local base_dir="$2" out_file="$3" old_file="$4"
   local name="${_sb[name]}"
+  local enable_ipv4="${_sb[enable_ipv4]:-true}" enable_ipv6="${_sb[enable_ipv6]:-true}"
 
   local raw canonical target
   raw=$(tmpfile "src-${name}")
@@ -671,33 +734,50 @@ source_build() {
     return 1
   fi
 
-  if ! canonicalize_stream <"$raw" >"$canonical"; then
-    log_error "source $name: canonicalization failed"
+  if ! canonicalize_stream strict <"$raw" >"$canonical"; then
+    log_error "source $name: source data rejected (invalid entry)"
     return 1
   fi
 
-  local n
-  n=$(count_lines "$canonical")
-  local min="${_sb[min_entries]}"
-  if (( n < min )); then
-    log_error "source $name: found $n entries, below min_entries=$min"
+  local n4 n6
+  read -r n4 n6 < <(count_v4_v6 "$canonical")
+
+  local enabled_total=0 any_family=0
+  if [[ "$enable_ipv4" == "true" ]]; then
+    enabled_total=$(( enabled_total + n4 ))
+    (( n4 > 0 )) && any_family=1
+  fi
+  if [[ "$enable_ipv6" == "true" ]]; then
+    enabled_total=$(( enabled_total + n6 ))
+    (( n6 > 0 )) && any_family=1
+  fi
+
+  local min="${_sb[min_entries]:-1}"
+  if (( enabled_total < min )); then
+    log_error "source $name: found $enabled_total entries in enabled families, below min_entries=$min"
+    return 1
+  fi
+  if (( any_family == 0 )); then
+    log_error "source $name: no entries in any enabled address family"
     return 1
   fi
 
-  local old_count=0 ratio
-  if [[ -f "$old_file" ]]; then
-    old_count=$(count_lines "$old_file")
-  fi
-  if (( old_count > 0 && n < old_count )); then
-    ratio=$(awk -v n="$n" -v o="$old_count" 'BEGIN { printf "%.4f", (o - n) / o }')
-    local max="${_sb[max_shrink_ratio]}"
-    if awk -v r="$ratio" -v m="$max" 'BEGIN { exit !(r > m) }'; then
-      log_warn "source $name: entries shrank ${ratio} (${old_count} -> ${n}), exceeds max_shrink_ratio=$max"
+  # Shrink guard: compare each family with the previously applied list. A
+  # rejected result keeps the previous one; --force bypasses the guard.
+  if [[ -f "$old_file" && "${FORCE:-0}" -eq 0 ]]; then
+    local o4 o6 ratio
+    read -r o4 o6 < <(count_v4_v6 "$old_file")
+    ratio="${_sb[max_shrink_ratio]:-0.5}"
+    if shrink_rejected "$name" v4 "$o4" "$n4" "$ratio"; then
+      return 1
+    fi
+    if shrink_rejected "$name" v6 "$o6" "$n6" "$ratio"; then
+      return 1
     fi
   fi
 
   atomic_install "$canonical" "$out_file" "0644"
-  _sb[_entries]="$n"
+  _sb[_entries]="$enabled_total"
   return 0
 }
 

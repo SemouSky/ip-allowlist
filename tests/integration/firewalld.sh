@@ -74,13 +74,14 @@ ZONE="$(firewall-cmd --get-default-zone 2>/dev/null)"
 
 cat >"$CONF" <<EOF
 firewall_backend=firewalld
-firewall_firewalld_zone=$ZONE
+allow_ports=all
+firewalld_zone=$ZONE
 fail2ban_enabled=false
-paths.state_dir=$STATE
-paths.sources_dir=$SOURCES
-paths.log_file=$WS/log.txt
-logging.level=info
-logging.target=stdout
+state_dir=$STATE
+sources_dir=$SOURCES
+log_file=$WS/log.txt
+log_level=info
+log_target=stdout
 update_interval=0
 EOF
 
@@ -88,7 +89,7 @@ cat >"$SOURCES/test.conf" <<EOF
 enabled=true
 name=testv4
 type=file
-file_path=$WS/v4.txt
+paths=$WS/v4.txt
 min_entries=1
 EOF
 
@@ -129,10 +130,10 @@ cat >"$SOURCES/test.conf" <<EOF
 enabled=false
 name=testv4
 type=file
-file_path=$WS/v4.txt
+paths=$WS/v4.txt
 min_entries=1
 EOF
-"$CLI" --config "$CONF" sync >"$WS/out3" 2>&1
+"$CLI" --config "$CONF" sync --allow-empty >"$WS/out3" 2>&1
 sets="$(firewall-cmd --get-ipsets 2>/dev/null || true)"
 assert_not_contains "firewalld disabled source ipset removed" "$sets" "ia-"
 rules="$(firewall-cmd --zone="$ZONE" --list-rich-rules 2>/dev/null || true)"
@@ -148,18 +149,19 @@ cat >"$SOURCES/test.conf" <<EOF
 enabled=true
 name=testv4
 type=file
-file_path=$WS/v4.txt
+paths=$WS/v4.txt
 min_entries=1
 EOF
 cat >"$CONF" <<EOF
 firewall_backend=firewalld
-firewall_firewalld_zone=$ALT_ZONE
+allow_ports=all
+firewalld_zone=$ALT_ZONE
 fail2ban_enabled=false
-paths.state_dir=$STATE
-paths.sources_dir=$SOURCES
-paths.log_file=$WS/log.txt
-logging.level=info
-logging.target=stdout
+state_dir=$STATE
+sources_dir=$SOURCES
+log_file=$WS/log.txt
+log_level=info
+log_target=stdout
 update_interval=0
 EOF
 "$CLI" --config "$CONF" sync >"$WS/out3b" 2>&1
@@ -175,7 +177,7 @@ cat >"$SOURCES/ports.conf" <<EOF
 enabled=true
 name=portrule
 type=file
-file_path=$WS/ports.txt
+paths=$WS/ports.txt
 min_entries=1
 allow_ports=443,8443
 allow_protocol=tcp
@@ -193,7 +195,7 @@ cat >"$SOURCES/test.conf" <<EOF
 enabled=true
 name=testv4
 type=file
-file_path=$WS/v4.txt
+paths=$WS/v4.txt
 min_entries=1
 EOF
 "$CLI" --config "$CONF" sync >/dev/null 2>&1

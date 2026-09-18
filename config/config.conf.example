@@ -1,48 +1,56 @@
 # ip-allowlist main configuration
-# All paths relative to this file's directory unless absolute
-# No spaces allowed in path values
+# Format: strict key=value, one per line. '#' starts a comment. Unknown keys
+# are rejected. Values may be quoted. Paths without a leading '/' are relative
+# to this file's directory. Path values must not contain spaces.
 
-# Config schema version for migration tracking
-schema_version=1
+# --- targets ---------------------------------------------------------------
+firewall_enabled=true
+fail2ban_enabled=true
+firewall_backend=nft              # nft | ufw | firewalld (required when firewall_enabled=true)
+allow_conflicting_firewall=false  # true: proceed even if another manager is active
 
-# Firewall backend: nft | ufw | firewalld (REQUIRED - no auto-detect)
-firewall_backend=nft
+# --- sources ---------------------------------------------------------------
+sources_dir=/etc/ip-allowlist/sources.d
+allow_empty_sources=false         # true: allow clearing everything when no source is active
 
-# Base chain/set name prefix (default: ip-allowlist)
-firewall_chain_name=ip-allowlist
-
-# Table family for nftables: inet | ip | ip6 (default: inet)
-firewall_table_family=inet
-
-# Target zone for firewalld (default: firewalld's default zone)
-# firewall_firewalld_zone=public
-
-# Default allow-rule parameters (any source may override these):
-#   allow_ports     any | port list, e.g. 443 or 443,8443 or 8000-8080
-#   allow_protocol  any | tcp | udp | tcp+udp
-#   enable_ipv4 / enable_ipv6  address family switches
-# "any" allows all traffic from the source addresses (all ports/protocols).
-allow_ports=any
-allow_protocol=any
+# --- default allow rules (a source may override any of these) --------------
+allow_ports=443                   # 443 | 80,443 | 20000-40000 | all
+allow_protocol=tcp+udp            # tcp | udp | tcp+udp (ignored when allow_ports=all)
 enable_ipv4=true
 enable_ipv6=true
+ipv6_required=false
+http_timeout=15                   # seconds
+http_retries=3
+user_agent=ip-allowlist
+min_entries=                      # empty -> 1; raise for large network sources
+max_shrink_ratio=0.5
 
-# Fail2ban integration
-fail2ban_enabled=true
-fail2ban_ignoreip_file=/etc/fail2ban/ip-allowlist.conf
-
-# Paths (relative to config dir or absolute)
-paths.state_dir=/var/lib/ip-allowlist
-paths.sources_dir=/etc/ip-allowlist/sources.d
-paths.log_file=/var/log/ip-allowlist.log
-
-# Logging
-logging.level=info
-logging.target=auto
-logging.format=text
-
-# Default update interval in seconds (15 minutes)
-update_interval=900
-
-# Run update on boot via oneshot service
+# --- schedule and self-update ---------------------------------------------
+update_interval=1d                # default per-source fetch interval
+timer_interval=15m                # systemd timer cadence (unit generation)
 update_on_boot=true
+auto_update=false                 # false: only report new versions
+update_check_interval=1d
+repo=SemouSky/ip-allowlist        # used by 'upgrade'
+
+# --- fail2ban --------------------------------------------------------------
+fail2ban_ignoreip_file=/etc/fail2ban/jail.d/zz-ip-allowlist.local
+fail2ban_merge_existing=true
+
+# --- firewalld -------------------------------------------------------------
+firewalld_zone=                   # empty -> firewalld default zone
+
+# --- paths and locking -----------------------------------------------------
+state_dir=/var/lib/ip-allowlist
+snapshot_retention=3
+lock_file=/run/ip-allowlist.lock
+lock_wait=30                      # seconds to wait for the lock on manual runs
+
+# --- logging ---------------------------------------------------------------
+log_level=info                    # debug | info | warn | error
+log_target=auto                   # auto | stdout | file | syslog | none (comma separated)
+log_file=                         # required when log_target includes 'file'
+log_format=text                   # text | json
+
+# --- config schema (optional) ---------------------------------------------
+# schema_version=1

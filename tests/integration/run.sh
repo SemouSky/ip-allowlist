@@ -64,14 +64,13 @@ mkdir -p "$SOURCES" "$STATE" "$FAIL2BAN_DIR"
 
 cat >"$CONF" <<EOF
 firewall_backend=nft
-firewall_chain_name=ip-allowlist
-firewall_table_family=inet
+allow_ports=all
 fail2ban_enabled=false
-paths.state_dir=$STATE
-paths.sources_dir=$SOURCES
-paths.log_file=$WS/log.txt
-logging.level=debug
-logging.target=stdout
+state_dir=$STATE
+sources_dir=$SOURCES
+log_file=$WS/log.txt
+log_level=debug
+log_target=stdout
 update_interval=0
 EOF
 
@@ -79,7 +78,7 @@ cat >"$SOURCES/v4.conf" <<EOF
 enabled=true
 name=v4src
 type=file
-file_path=$WS/v4.txt
+paths=$WS/v4.txt
 min_entries=1
 max_shrink_ratio=0.9
 EOF
@@ -88,7 +87,7 @@ cat >"$SOURCES/v6.conf" <<EOF
 enabled=true
 name=v6src
 type=file
-file_path=$WS/v6.txt
+paths=$WS/v6.txt
 min_entries=1
 EOF
 
@@ -150,12 +149,21 @@ rules="$(nft list table inet ip-allowlist 2>/dev/null || true)"
 assert_not_contains "check did not apply change" "$rules" "8.8.8.8"
 
 # ---------------------------------------------------------------------------
-# 4. Invalid entries filtered, duplicates merged
+# 4. Strict parsing rejects invalid source data; valid data merges
 # ---------------------------------------------------------------------------
+before="$(cat "$STATE/current/v4src.ips" 2>/dev/null || true)"
 printf '1.2.3.0/25\n1.2.3.128/25\nnot-an-ip\n999.1.1.1\n' >"$WS/v4.txt"
-"$CLI" --config "$CONF" sync >"$WS/out4" 2>&1
-current="$(cat "$STATE/current/v4src.ips" 2>/dev/null || true)"
-assert_eq "invalid filtered and merged" "1.2.3.0/24" "$current"
+if "$CLI" --config "$CONF" sync >"$WS/out4" 2>&1; then
+  fail "invalid source data is rejected"
+else
+  pass "invalid source data is rejected"
+fi
+after="$(cat "$STATE/current/v4src.ips" 2>/dev/null || true)"
+assert_eq "invalid data keeps previous values" "$before" "$after"
+
+printf '1.2.3.0/25\n1.2.3.128/25\n' >"$WS/v4.txt"
+"$CLI" --config "$CONF" sync >"$WS/out4b" 2>&1
+assert_eq "ipv4 halves merge" "1.2.3.0/24" "$(cat "$STATE/current/v4src.ips" 2>/dev/null || true)"
 
 # ---------------------------------------------------------------------------
 # 5. min_entries enforcement
@@ -165,7 +173,7 @@ cat >"$SOURCES/v4.conf" <<EOF
 enabled=true
 name=v4src
 type=file
-file_path=$WS/v4.txt
+paths=$WS/v4.txt
 min_entries=5
 EOF
 if "$CLI" --config "$CONF" sync >"$WS/out5" 2>&1; then
@@ -187,7 +195,7 @@ cat >"$SOURCES/v4.conf" <<EOF
 enabled=true
 name=v4src
 type=file
-file_path=$WS/v4.txt
+paths=$WS/v4.txt
 min_entries=1
 EOF
 printf '1.2.3.0/24\n' >"$WS/v4.txt"
@@ -200,14 +208,14 @@ cat >"$SOURCES/a-b.conf" <<EOF
 enabled=true
 name=a-b
 type=file
-file_path=$WS/v4.txt
+paths=$WS/v4.txt
 min_entries=1
 EOF
 cat >"$SOURCES/a_b.conf" <<EOF
 enabled=true
 name=a_b
 type=file
-file_path=$WS/v4.txt
+paths=$WS/v4.txt
 min_entries=1
 EOF
 if "$CLI" --config "$CONF" sync >"$WS/out5b" 2>&1; then
@@ -242,7 +250,7 @@ cat >"$SOURCES/v6.conf" <<EOF
 enabled=false
 name=v6src
 type=file
-file_path=$WS/v6.txt
+paths=$WS/v6.txt
 min_entries=1
 EOF
 "$CLI" --config "$CONF" sync >"$WS/out10" 2>&1
@@ -254,15 +262,14 @@ assert_not_contains "disabled source not in firewall" "$rules" "2001:db8::/32"
 # ---------------------------------------------------------------------------
 cat >"$CONF" <<EOF
 firewall_backend=nft
-firewall_chain_name=ip-allowlist
-firewall_table_family=inet
+allow_ports=all
 fail2ban_enabled=true
 fail2ban_ignoreip_file=$FAIL2BAN_DIR/ip-allowlist.conf
-paths.state_dir=$STATE
-paths.sources_dir=$SOURCES
-paths.log_file=$WS/log.txt
-logging.level=debug
-logging.target=stdout
+state_dir=$STATE
+sources_dir=$SOURCES
+log_file=$WS/log.txt
+log_level=debug
+log_target=stdout
 update_interval=0
 EOF
 
@@ -290,22 +297,21 @@ cat >"$SOURCES/v4.conf" <<EOF
 enabled=false
 name=v4src
 type=file
-file_path=$WS/v4.txt
+paths=$WS/v4.txt
 min_entries=1
 EOF
 printf '\n' >"$WS/empty.txt"
 
 cat >"$CONF" <<EOF
 firewall_backend=nft
-firewall_chain_name=ip-allowlist
-firewall_table_family=inet
+allow_ports=all
 fail2ban_enabled=true
 fail2ban_ignoreip_file=$FAIL2BAN_DIR/ip-allowlist.conf
-paths.state_dir=$STATE
-paths.sources_dir=$SOURCES
-paths.log_file=$WS/log.txt
-logging.level=debug
-logging.target=stdout
+state_dir=$STATE
+sources_dir=$SOURCES
+log_file=$WS/log.txt
+log_level=debug
+log_target=stdout
 update_interval=0
 EOF
 
@@ -313,7 +319,7 @@ FAIL2BAN_JAIL_CONF="$WS/nonexistent.conf" \
 FAIL2BAN_JAIL_LOCAL="$WS/nonexistent.local" \
 FAIL2BAN_JAIL_D="$WS/nodir" \
 FAIL2BAN_RELOAD=false \
-  "$CLI" --config "$CONF" sync >"$WS/out12" 2>&1
+  "$CLI" --config "$CONF" sync --allow-empty >"$WS/out12" 2>&1
 
 if [[ ! -f "$FAIL2BAN_DIR/ip-allowlist.conf" ]]; then
   pass "empty union removes drop-in"
@@ -324,22 +330,22 @@ fi
 # fail2ban enabled but its drop-in directory missing: warn and skip, keep exit 0
 cat >"$CONF" <<EOF
 firewall_backend=nft
-firewall_table_family=inet
+allow_ports=all
 fail2ban_enabled=true
 fail2ban_ignoreip_file=$WS/no-such-fail2ban-dir/ip-allowlist.conf
-paths.state_dir=$STATE
-paths.sources_dir=$SOURCES
-paths.log_file=$WS/log.txt
-logging.level=debug
-logging.target=stdout
+state_dir=$STATE
+sources_dir=$SOURCES
+log_file=$WS/log.txt
+log_level=debug
+log_target=stdout
 update_interval=0
 EOF
-if "$CLI" --config "$CONF" sync >"$WS/out-missing-f2b" 2>&1; then
+if "$CLI" --config "$CONF" sync --allow-empty >"$WS/out-missing-f2b" 2>&1; then
   pass "missing fail2ban directory does not fail sync"
 else
   fail "missing fail2ban directory does not fail sync (see $WS/out-missing-f2b)"
 fi
-assert_contains "missing fail2ban directory is reported" "$(cat "$WS/out-missing-f2b")" "does not exist"
+assert_contains "missing fail2ban directory is reported" "$(cat "$WS/out-missing-f2b")" "missing"
 
 # ---------------------------------------------------------------------------
 # 10. version command
@@ -353,10 +359,11 @@ assert_contains "version output" "$version_out" "ip-allowlist"
 cat >"$WS/schema.conf" <<EOF
 schema_version=99
 firewall_backend=nft
-paths.state_dir=$STATE
-paths.sources_dir=$SOURCES
-paths.log_file=$WS/log.txt
-logging.target=stdout
+allow_ports=all
+state_dir=$STATE
+sources_dir=$SOURCES
+log_file=$WS/log.txt
+log_target=stdout
 EOF
 if "$CLI" --config "$WS/schema.conf" sources >"$WS/out13" 2>&1; then
   fail "newer schema_version rejected"
@@ -368,10 +375,11 @@ assert_contains "schema error mentions supported version" "$(cat "$WS/out13")" "
 cat >"$WS/syslog.conf" <<EOF
 schema_version=1
 firewall_backend=nft
-paths.state_dir=$STATE
-paths.sources_dir=$SOURCES
-paths.log_file=$WS/log.txt
-logging.target=syslog
+allow_ports=all
+state_dir=$STATE
+sources_dir=$SOURCES
+log_file=$WS/log.txt
+log_target=syslog
 EOF
 if "$CLI" --config "$WS/syslog.conf" sources >"$WS/out14" 2>&1; then
   pass "syslog logging target runs"
@@ -395,7 +403,7 @@ cat >"$SOURCES/v4.conf" <<EOF
 enabled=true
 name=v4src
 type=file
-file_path=$WS/v4.txt
+paths=$WS/v4.txt
 min_entries=1
 EOF
 "$CLI" --config "$CONF" sync >"$WS/out12c" 2>&1
@@ -415,7 +423,7 @@ cat >"$SW/sources.d/switchsrc.conf" <<EOF
 enabled=true
 name=switchsrc
 type=file
-file_path=$SW/v4.txt
+paths=$SW/v4.txt
 min_entries=1
 EOF
 
@@ -423,10 +431,10 @@ mk_switch_conf() {
   cat >"$SW/$1.conf" <<EOF
 firewall_backend=$2
 fail2ban_enabled=false
-paths.state_dir=$SW/state
-paths.sources_dir=$SW/sources.d
-paths.log_file=$SW/log
-logging.target=stdout
+state_dir=$SW/state
+sources_dir=$SW/sources.d
+log_file=$SW/log
+log_target=stdout
 update_interval=0
 EOF
 }
@@ -458,12 +466,13 @@ mkdir -p "$FB"
 mk_fb_conf() {
   cat >"$FB/$1.conf" <<EOF
 firewall_backend=nft
+allow_ports=all
 fail2ban_enabled=true
 fail2ban_ignoreip_file=$FB/$2.conf
-paths.state_dir=$FB/state
-paths.sources_dir=$SW/sources.d
-paths.log_file=$FB/log
-logging.target=stdout
+state_dir=$FB/state
+sources_dir=$SW/sources.d
+log_file=$FB/log
+log_target=stdout
 update_interval=0
 EOF
 }
@@ -493,7 +502,7 @@ cat >"$RP/sources.d/rp.conf" <<EOF
 enabled=true
 name=rp
 type=file
-file_path=$RP/v.txt
+paths=$RP/v.txt
 min_entries=1
 allow_ports=443
 allow_protocol=tcp
@@ -503,26 +512,27 @@ cat >"$RP/sources.d/rp2.conf" <<EOF
 enabled=true
 name=rp2
 type=file
-file_path=$RP/v.txt
+paths=$RP/v.txt
 min_entries=1
-allow_ports=any
+allow_ports=443
 allow_protocol=udp
 enable_ipv4=false
 EOF
 cat >"$RP/config.conf" <<EOF
 firewall_backend=nft
+allow_ports=all
 fail2ban_enabled=false
-paths.state_dir=$RP/state
-paths.sources_dir=$RP/sources.d
-paths.log_file=$RP/log
-logging.target=stdout
+state_dir=$RP/state
+sources_dir=$RP/sources.d
+log_file=$RP/log
+log_target=stdout
 update_interval=0
 EOF
 "$CLI" --config "$RP/config.conf" sync >"$RP/out" 2>&1
 rules="$(nft list table inet ip-allowlist 2>/dev/null || true)"
 assert_contains "nft limited ports rule" "$rules" "ip saddr @v4_rp tcp dport 443 accept"
 assert_not_contains "nft disabled ipv6 has no v6 set" "$rules" "v6_rp "
-assert_contains "nft protocol-only rule" "$rules" "ip6 saddr @v6_rp2 meta l4proto udp accept"
+assert_contains "nft udp port rule" "$rules" "ip6 saddr @v6_rp2 udp dport 443 accept"
 assert_not_contains "nft disabled ipv4 has no v4 set" "$rules" "v4_rp2 "
 
 # Changing only allow_ports must rebuild even though the source data is unchanged.

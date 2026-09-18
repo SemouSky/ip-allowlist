@@ -210,11 +210,45 @@ assert_eq "kv parse urls"        "https://example.com/a, https://example.com/b" 
 assert_eq "kv parse quoted"      "hello world" "${parsed[quoted]}"
 assert_eq "kv parse empty"       "" "${parsed[empty_value]}"
 
+scfg="$(mktemp)"
+cat >"$scfg" <<'EOF'
+name = cloudflare
+type = http
+urls = https://example.com/a
+min_entries = 3
+max_shrink_ratio = 0.25
+allow_ports = 443
+allow_protocol = tcp+udp
+EOF
 declare -A src=()
-source_load_config src "$cfg"
-assert_eq "source default enabled" "true" "${src[enabled]}"
+source_load_config src "$scfg"
+assert_eq "source enabled default" "true" "${src[enabled]}"
 assert_eq "source min_entries"     "3" "${src[min_entries]}"
 assert_eq "source max_shrink"      "0.25" "${src[max_shrink_ratio]}"
+
+ucfg="$(mktemp)"
+printf 'name = a\ntype = http\nurls = http://x\nbogus = 1\n' >"$ucfg"
+declare -A usrc=()
+assert_not_ok "source unknown key rejected" source_load_config usrc "$ucfg"
+
+ncfg="$(mktemp)"
+printf 'name = Bad\ntype = http\nurls = http://x\n' >"$ncfg"
+declare -A nsrc=()
+assert_not_ok "source invalid name rejected" source_load_config nsrc "$ncfg"
+
+ffcfg="$(mktemp)"
+printf 'name = a\ntype = file\npaths = /tmp/x\nurls = http://x\n' >"$ffcfg"
+declare -A fsrc=()
+assert_not_ok "source urls+paths rejected" source_load_config fsrc "$ffcfg"
+
+# durations
+assert_eq "duration bare"     "30" "$(parse_duration 30)"
+assert_eq "duration seconds"  "45" "$(parse_duration 45s)"
+assert_eq "duration minutes"  "900" "$(parse_duration 15m)"
+assert_eq "duration hours"    "7200" "$(parse_duration 2h)"
+assert_eq "duration days"     "86400" "$(parse_duration 1d)"
+assert_eq "duration weeks"    "604800" "$(parse_duration 1w)"
+assert_not_ok "duration invalid" parse_duration "1x"
 
 bad="$(mktemp)"
 printf 'type=http\nurls=http://x\n' >"$bad"
@@ -319,10 +353,11 @@ assert_eq "protocol normalize"     "tcp+udp" "$(normalize_protocol 'udp+tcp')"
 assert_eq "protocol normalize any" "any" "$(normalize_protocol all)"
 
 assert_eq "effective all traffic"        "" "$(effective_protocols any any)"
-assert_eq "effective tcp only"           "tcp" "$(effective_protocols tcp any)"
-assert_eq "effective tcp+udp only"       "tcp udp" "$(effective_protocols tcp+udp any)"
+assert_eq "effective all ignores protocol" "" "$(effective_protocols tcp any)"
+assert_eq "effective all ignores tcp+udp"  "" "$(effective_protocols tcp+udp any)"
 assert_eq "effective ports imply both"   "tcp udp" "$(effective_protocols any 443)"
 assert_eq "effective ports + tcp"        "tcp" "$(effective_protocols tcp 443)"
+assert_eq "effective ports + udp"        "udp" "$(effective_protocols udp 443)"
 assert_eq "ports_to_ufw range"           "8000:8080" "$(ports_to_ufw 8000-8080)"
 assert_eq "ports_to_ufw list"            "443,8000:8080" "$(ports_to_ufw '443,8000-8080')"
 

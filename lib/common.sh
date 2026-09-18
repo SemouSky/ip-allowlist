@@ -34,6 +34,45 @@ QUIET=0
 RUN_ID=""
 DRY_RUN=0
 
+# Derived log routing (set by log_configure_targets from LOG_TARGET).
+LOG_EMIT_STDOUT=1
+LOG_EMIT_FILE=0
+LOG_EMIT_SYSLOG=0
+LOG_SILENT=0
+
+# Resolve LOG_TARGET (a comma separated list or a single value) into the
+# LOG_EMIT_* flags. Valid values: auto, stdout, file, syslog, none.
+log_configure_targets() {
+  LOG_EMIT_STDOUT=0
+  LOG_EMIT_FILE=0
+  LOG_EMIT_SYSLOG=0
+  LOG_SILENT=0
+  local item
+  local -a items=()
+  IFS=',' read -ra items <<<"${LOG_TARGET:-auto}"
+  for item in "${items[@]}"; do
+    item=$(trim "$item")
+    case "$item" in
+      auto)   LOG_EMIT_STDOUT=1 ;;
+      stdout) LOG_EMIT_STDOUT=1 ;;
+      file)   LOG_EMIT_FILE=1 ;;
+      syslog) LOG_EMIT_SYSLOG=1 ;;
+      none)   LOG_SILENT=1 ;;
+      "")     ;;
+      *)      die "config: invalid log_target entry '$item'" ;;
+    esac
+  done
+  if (( LOG_SILENT == 1 )); then
+    LOG_EMIT_STDOUT=0
+    LOG_EMIT_FILE=0
+    LOG_EMIT_SYSLOG=0
+  fi
+  if (( LOG_EMIT_FILE == 1 )) && [[ -z "$LOG_FILE" ]]; then
+    die "config: log_target includes 'file' but log_file is empty"
+  fi
+  return 0
+}
+
 # ---------------------------------------------------------------------------
 # Output helpers
 # ---------------------------------------------------------------------------
@@ -102,16 +141,18 @@ log_at() {
     record=$(printf '%s [%s] (%s) %s' "$ts" "${level^^}" "$RUN_ID" "$*")
   fi
 
-  err "$record"
+  if (( LOG_SILENT == 1 )); then
+    return 0
+  fi
+  if (( LOG_EMIT_STDOUT == 1 )); then
+    err "$record"
+  fi
 
-  if [[ "$LOG_TARGET" == "syslog" ]]; then
-    if have logger; then
-      printf '%s\n' "$record" \
-        | logger -t ip-allowlist -p "user.$(log_syslog_priority "$level")" 2>/dev/null || true
-    fi
-  elif [[ -n "$LOG_FILE" && "$LOG_TARGET" == "file" ]]; then
-    printf '%s\n' "$record" >>"$LOG_FILE" 2>/dev/null || true
-  elif [[ -n "$LOG_FILE" && "$LOG_TARGET" == "auto" && ! -t 1 ]]; then
+  if (( LOG_EMIT_SYSLOG == 1 )) && have logger; then
+    printf '%s\n' "$record" \
+      | logger -t ip-allowlist -p "user.$(log_syslog_priority "$level")" 2>/dev/null || true
+  fi
+  if (( LOG_EMIT_FILE == 1 )) && [[ -n "$LOG_FILE" ]]; then
     printf '%s\n' "$record" >>"$LOG_FILE" 2>/dev/null || true
   fi
 }
@@ -189,8 +230,7 @@ kv_load_file() {
     [[ -z "${line// }" ]] && continue
     [[ "$line" =~ ^[[:space:]]*# ]] && continue
     if [[ ! "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_.]*)[[:space:]]*=(.*)$ ]]; then
-      log_warn "ignoring malformed line $lineno in $file: $line"
-      continue
+      die "config: malformed line $lineno in $file: $line"
     fi
     key="${BASH_REMATCH[1]}"
     value="${BASH_REMATCH[2]}"
@@ -201,6 +241,43 @@ kv_load_file() {
     fi
     _kv_out["$key"]="$value"
   done <"$file"
+}
+
+# Reject keys that are not in the allowed list.
+# Usage: kv_reject_unknown <array_name> <file> <allowed> <allowed> ...
+kv_reject_unknown() {
+  local -n _kv_in="$1"; shift
+  local file="$1"; shift
+  local key allowed ok
+  for key in "${!_kv_in[@]}"; do
+    ok=0
+    for allowed in "$@"; do
+      if [[ "$key" == "$allowed" ]]; then ok=1; break; fi
+    done
+    (( ok == 1 )) || die "config: unknown key '$key' in $file"
+  done
+}
+
+# Parse a duration into seconds. Accepts a bare number (seconds) or a
+# number with an s/m/h/d/w suffix, e.g. 30, 15m, 1d, 2h, 1w.
+# Usage: parse_duration <value>
+parse_duration() {
+  local raw="$1" num unit
+  if [[ "$raw" =~ ^([0-9]+)([smhdw]?)$ ]]; then
+    num="${BASH_REMATCH[1]}"
+    unit="${BASH_REMATCH[2]}"
+  else
+    die "config: invalid duration '$raw' (use <n> or <n>s|m|h|d|w)"
+  fi
+  case "$unit" in
+    "")  printf '%s' "$(( 10#$num ))" ;;
+    s)   printf '%s' "$(( 10#$num ))" ;;
+    m)   printf '%s' "$(( 10#$num * 60 ))" ;;
+    h)   printf '%s' "$(( 10#$num * 3600 ))" ;;
+    d)   printf '%s' "$(( 10#$num * 86400 ))" ;;
+    w)   printf '%s' "$(( 10#$num * 604800 ))" ;;
+    *)   die "config: invalid duration unit in '$raw'" ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -275,7 +352,7 @@ lock_acquire() {
   lock_dir=$(dirname -- "$lock_file")
   mkdir -p -- "$lock_dir"
   exec {LOCK_FD}>"$lock_file" || die "cannot open lock file: $lock_file"
-  if ! flock -w "$IP_ALLOWLIST_LOCK_TIMEOUT" "$LOCK_FD"; then
+  if ! flock -w "${LOCK_WAIT:-$IP_ALLOWLIST_LOCK_TIMEOUT}" "$LOCK_FD"; then
     die "another instance is running (lock: $lock_file)"
   fi
   printf '%s' "$$" >"$lock_file" 2>/dev/null || true

@@ -52,18 +52,24 @@ update_interval=3600
 ## 命令
 
 ```bash
-ip-allowlist              # 同步所有来源（默认命令）
-ip-allowlist sync         # 显式同步
-ip-allowlist check        # 仅检查变更，不应用
-ip-allowlist sources      # 列出已配置来源
-ip-allowlist status       # 显示状态（--check 为 Nagios 格式）
-ip-allowlist cleanup      # 移除防火墙对象与 fail2ban drop-in
-ip-allowlist version      # 显示版本
-ip-allowlist upgrade      # 检查更新
-ip-allowlist install      # 全系统安装
-ip-allowlist uninstall    # 卸载（--purge 同时清除数据）
-ip-allowlist apply-offline # 使用本地缓存状态应用
+ip-allowlist                 # 同步所有来源（默认命令，别名 run）
+ip-allowlist sync            # 显式同步
+ip-allowlist --source NAME   # 将 sync/check/status 限定到某来源（可重复）
+ip-allowlist --allow-empty   # 活跃来源为 0 时允许清空全部
+ip-allowlist check           # 校验并报告变更，不应用
+ip-allowlist check --offline # 仅校验配置，不访问网络
+ip-allowlist apply-offline   # 使用缓存状态应用，不访问网络
+ip-allowlist sources         # 列出已配置来源（--json）
+ip-allowlist status          # 显示状态（--json，--check 为 Nagios 格式）
+ip-allowlist cleanup         # 移除防火墙对象与 fail2ban drop-in
+ip-allowlist version         # 显示版本
+ip-allowlist upgrade         # 检查/安装更新
+ip-allowlist upgrade --version 0.3.0 --from-dir DIR  # 离线/指定版本安装
+ip-allowlist install         # 全系统安装
+ip-allowlist uninstall       # 卸载（--purge 同时清除数据）
 ```
+
+`allow_ports` 默认 `443`、`allow_protocol` 默认 `tcp+udp`；设为 `allow_ports=all` 可放行来源地址的所有端口。
 
 ## 系统要求
 

@@ -52,18 +52,25 @@ update_interval=3600
 ## Commands
 
 ```bash
-ip-allowlist              # Sync all sources (default)
-ip-allowlist sync         # Explicit sync
-ip-allowlist check        # Check for changes without applying
-ip-allowlist sources      # List configured sources
-ip-allowlist status       # Show status (--check for Nagios format)
-ip-allowlist cleanup      # Remove firewall objects and fail2ban drop-in
-ip-allowlist version      # Show version
-ip-allowlist upgrade      # Check for updates
-ip-allowlist install      # Install system-wide
-ip-allowlist uninstall    # Uninstall (--purge to remove data)
-ip-allowlist apply-offline # Apply from local state
+ip-allowlist                 # Sync all sources (default; alias: run)
+ip-allowlist sync            # Explicit sync
+ip-allowlist --source NAME   # Limit sync/check/status to one source (repeatable)
+ip-allowlist --allow-empty   # Allow clearing everything when no source is active
+ip-allowlist check           # Validate and report changes without applying
+ip-allowlist check --offline # Validate config only, no network
+ip-allowlist apply-offline   # Apply from cached state, no network
+ip-allowlist sources         # List configured sources (--json)
+ip-allowlist status          # Show status (--json, --check for Nagios)
+ip-allowlist cleanup         # Remove firewall objects and fail2ban drop-in
+ip-allowlist version         # Show version
+ip-allowlist upgrade         # Check for/install updates
+ip-allowlist upgrade --version 0.3.0 --from-dir DIR  # Offline / pinned install
+ip-allowlist install         # Install system-wide
+ip-allowlist uninstall       # Uninstall (--purge to remove data)
 ```
+
+`allow_ports` defaults to `443` with `allow_protocol=tcp+udp`; set
+`allow_ports=all` to allow every port from the source addresses.
 
 ## Requirements
 

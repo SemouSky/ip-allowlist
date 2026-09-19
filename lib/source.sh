@@ -777,7 +777,7 @@ source_build() {
     fi
   fi
 
-  atomic_install "$canonical" "$out_file" "0644"
+  atomic_install "$canonical" "$out_file" "0600"
   _sb[_entries]="$enabled_total"
   return 0
 }

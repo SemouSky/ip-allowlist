@@ -85,6 +85,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `auto_update=true` now installs the newer release and re-executes the run
 - crash recovery rolls sources back to the snapshot taken during the interrupted
   run, using the in-progress marker start time
+- `upgrade --version/--from-dir/--from-tarball` delegate to install.sh for
+  offline or pinned installs; a failed install leaves the previous version intact
+- state files are written `0600`
 
 ## [0.0.0] - 2026-09-18
 

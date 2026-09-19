@@ -103,6 +103,7 @@ state_set_applied_hash() {
   local f
   f=$(state_path "applied/${name}.hash")
   printf '%s\n' "$hash" >"$f"
+  chmod 0600 "$f" 2>/dev/null || true
 }
 
 # Remove applied-hash, entries, rule spec and run marker for a source.
@@ -131,7 +132,7 @@ state_write_rule_spec() {
     printf 'enable_ipv4=%s\n' "$ipv4"
     printf 'enable_ipv6=%s\n' "$ipv6"
   } >"$tmp"
-  atomic_install "$tmp" "$dir/${name}.conf" "0644"
+  atomic_install "$tmp" "$dir/${name}.conf" "0600"
 }
 
 # ---------------------------------------------------------------------------
@@ -223,6 +224,7 @@ state_known_add() {
   f=$(state_known_file)
   state_known_has "$name" && return 0
   printf '%s\n' "$name" >>"$f"
+  chmod 0600 "$f" 2>/dev/null || true
 }
 
 state_known_remove() {

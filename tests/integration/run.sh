@@ -698,6 +698,18 @@ if [[ -x "$ROOT/install.sh" ]]; then
   piped_version="$(/usr/local/sbin/ip-allowlist version 2>&1 || true)"
   assert_contains "piped install binary runs" "$piped_version" "ip-allowlist"
 
+  # A broken source tree must fail without damaging the installed copy.
+  BADTREE="$WS/badtree"
+  mkdir -p "$BADTREE"
+  cp "$ROOT/ip-allowlist" "$BADTREE/ip-allowlist"
+  if "$ROOT/install.sh" --yes --from-dir "$BADTREE" >"$WS/install-bad.log" 2>&1; then
+    fail "install from an incomplete tree fails"
+  else
+    pass "install from an incomplete tree fails"
+  fi
+  still="$(/usr/local/sbin/ip-allowlist version 2>&1 || true)"
+  assert_contains "failed install leaves the previous install intact" "$still" "ip-allowlist"
+
   if "$ROOT/uninstall.sh" --yes --purge >"$WS/uninstall.log" 2>&1; then
     pass "uninstall.sh exits 0"
   else

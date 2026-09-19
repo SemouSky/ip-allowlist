@@ -43,7 +43,7 @@ model. This document details the implementation-level controls.
 - The script must run as root for firewall and fail2ban operations.
 - `install.sh` sets:
   - config `0640` root:root
-  - state dir `0700` root:root
+  - state dir `0700` root:root and state files `0600` root:root
   - log file created via logrotate as `0640` root:root
 - The systemd unit uses `ProtectSystem=strict`, `ProtectHome=true`,
   `PrivateTmp=true`, `NoNewPrivileges=true`, `StateDirectory=ip-allowlist`, and

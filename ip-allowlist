@@ -1026,7 +1026,7 @@ cmd_sync() {
       source_selected "$name" || continue
       [[ -f "$STATE_DIR/current/${name}.ips" ]] && state_known_add "$name"
     done
-    atomic_install "$fp_tmp" "$STATE_DIR/desired.hash" "0644"
+    atomic_install "$fp_tmp" "$STATE_DIR/desired.hash" "0600"
     state_set_backend "$BACKEND"
     if (( backend_changed == 1 )); then
       cleanup_previous_backend "$prev_backend" "$prev_firewalld_zone"
@@ -1374,8 +1374,16 @@ cmd_status() {
   done
 }
 
-  LOG_COMPONENT=upgrade
 cmd_upgrade() {
+  LOG_COMPONENT=upgrade
+  # Offline / pinned installs are delegated straight to install.sh.
+  if [[ -n "$FROM_DIR" || -n "$FROM_TARBALL" || -n "$UPGRADE_VERSION" ]]; then
+    local -a iargs=(--yes)
+    [[ -n "$FROM_DIR" ]] && iargs+=(--from-dir "$FROM_DIR")
+    [[ -n "$FROM_TARBALL" ]] && iargs+=(--from-tarball "$FROM_TARBALL")
+    [[ -n "$UPGRADE_VERSION" ]] && iargs+=(--version "$UPGRADE_VERSION")
+    exec "$IP_ALLOWLIST_ROOT/install.sh" "${iargs[@]}"
+  fi
   local repo="$REPO"
   local api="https://api.github.com/repos/${repo}/releases/latest"
   local latest

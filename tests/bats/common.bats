@@ -23,6 +23,23 @@ EOF
   rm -f "$f"
 }
 
+@test "kv strips inline comments and keeps quoted hashes" {
+  local f; f="$(mktemp)"
+  cat >"$f" <<'EOF'
+a = true          # trailing comment
+b = "x#y"         # quoted keeps the hash
+c = 443#no-space
+d = 'q' # quoted single
+EOF
+  declare -A p=()
+  kv_load_file p "$f"
+  [ "${p[a]}" = "true" ]
+  [ "${p[b]}" = "x#y" ]
+  [ "${p[c]}" = "443" ]
+  [ "${p[d]}" = "q" ]
+  rm -f "$f"
+}
+
 @test "kv rejects malformed lines" {
   local f; f="$(mktemp)"
   printf 'this is not kv\n' >"$f"

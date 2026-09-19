@@ -236,9 +236,15 @@ kv_load_file() {
     key="${BASH_REMATCH[1]}"
     value="${BASH_REMATCH[2]}"
     value=$(trim "$value")
-    # Strip surrounding quotes if present
-    if [[ "$value" =~ ^\"(.*)\"$ ]] || [[ "$value" =~ ^\'(.*)\'$ ]]; then
+    # A quoted value wins; anything after the closing quote is a comment.
+    # Otherwise strip an unquoted trailing comment (quote a value to keep '#').
+    if [[ "$value" =~ ^\"([^\"]*)\" ]]; then
       value="${BASH_REMATCH[1]}"
+    elif [[ "$value" =~ ^\'([^\']*)\' ]]; then
+      value="${BASH_REMATCH[1]}"
+    else
+      value="${value%%#*}"
+      value=$(trim "$value")
     fi
     _kv_out["$key"]="$value"
   done <"$file"

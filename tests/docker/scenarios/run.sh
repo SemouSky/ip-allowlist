@@ -96,6 +96,21 @@ printf '1.2.3.0/24\n5.6.7.8\n' >"$WS/v4.txt"
 printf '2001:db8::/32\n' >"$WS/v6.txt"
 
 # ---------------------------------------------------------------------------
+# 0. The shipped example config must be usable as-is (inline comments etc.)
+# ---------------------------------------------------------------------------
+EX="$WS/example"
+mkdir -p "$EX/sources.d"
+cp "$ROOT/config/config.conf.example" "$EX/config.conf"
+sed -i "s#^sources_dir=.*#sources_dir=$EX/sources.d#; s#^state_dir=.*#state_dir=$EX/state#; s#^log_file=.*#log_file=#" "$EX/config.conf"
+printf 'name=cf\nenabled=true\ntype=file\npaths=/dev/null\nmin_entries=0\n' >"$EX/sources.d/cf.conf"
+if "$CLI" --config "$EX/config.conf" sources >"$EX/out" 2>&1; then
+  pass "shipped example config parses"
+else
+  fail "shipped example config parses (see $EX/out)"
+  cat "$EX/out" >&2
+fi
+
+# ---------------------------------------------------------------------------
 # 1. Initial sync
 # ---------------------------------------------------------------------------
 if "$CLI" --config "$CONF" sync >"$WS/out1" 2>&1; then

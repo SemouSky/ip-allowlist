@@ -4,8 +4,9 @@
 
 ## Main config: `/etc/ip-allowlist/config.conf`
 
-Format: strict `key=value`, one per line. `#` starts a comment, values may be
-quoted, and **unknown keys are rejected**. There is no variable expansion and no
+Format: strict `key=value`, one per line. `#` starts a comment (also inline
+after a value), values may be quoted, and **unknown keys are rejected**. Quote a
+value to keep a literal `#` in it (for example `urls="https://example/#/list"`). There is no variable expansion and no
 `eval`. Paths without a leading `/` are relative to the config file's directory
 and must not contain spaces.
 

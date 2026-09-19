@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0](https://github.com/SemouSky/ip-allowlist/compare/v0.4.0...v0.5.0) (2026-09-19)
+
+
+### Features
+
+* honour per-source firewall_enabled/fail2ban_enabled ([3822f88](https://github.com/SemouSky/ip-allowlist/commit/3822f882f603f09b152c5b0cbb46e6e88cae02a5))
+
 ## [0.4.0](https://github.com/SemouSky/ip-allowlist/compare/v0.3.0...v0.4.0) (2026-09-19)
 
 

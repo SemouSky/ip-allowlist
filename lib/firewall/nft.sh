@@ -249,11 +249,11 @@ nft_emit_source_batch() {
   [[ "$ipv6" == "true" ]] && [[ -n "$(nft_family_entries "$file" v6)" ]] && have6=1
   if (( have4 == 1 )); then
     nft_emit_source_rules "ip" "al_${name}_v4" "$ports" "$protocols" \
-      | sed "s/^/add rule $NFT_FAMILY $NFT_TABLE al_${name} /"
+      | sed "s/^[[:space:]]*/add rule $NFT_FAMILY $NFT_TABLE al_${name} /"
   fi
   if (( have6 == 1 )); then
     nft_emit_source_rules "ip6" "al_${name}_v6" "$ports" "$protocols" \
-      | sed "s/^/add rule $NFT_FAMILY $NFT_TABLE al_${name} /"
+      | sed "s/^[[:space:]]*/add rule $NFT_FAMILY $NFT_TABLE al_${name} /"
   fi
 }
 

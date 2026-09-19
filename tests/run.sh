@@ -74,18 +74,18 @@ run_unit_local() {
     return 77
   fi
   echo "==> unit tests ($bash4)"
-  "$bash4" "$ROOT/tests/unit.sh"
+  "$bash4" "$ROOT/tests/bats/run.sh"
 }
 
 run_integration_local() {
   local rc=0
   echo "==> integration tests (local)"
-  bash "$ROOT/tests/integration/run.sh" || rc=1
+  bash "$ROOT/tests/docker/scenarios/run.sh" || rc=1
   local script
   for script in ufw firewalld connectivity; do
-    [ -f "$ROOT/tests/integration/$script.sh" ] || continue
+    [ -f "$ROOT/tests/docker/scenarios/$script.sh" ] || continue
     echo "==> $script integration tests"
-    bash "$ROOT/tests/integration/$script.sh"
+    bash "$ROOT/tests/docker/scenarios/$script.sh"
     local rcs=$?
     if [ "$rcs" -ne 0 ] && [ "$rcs" -ne 77 ]; then
       rc=1

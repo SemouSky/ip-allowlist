@@ -193,18 +193,3 @@ allow manual rollback.
 | 3    | Status UNKNOWN |
 | 64   | Usage error |
 | 77   | Tests skipped (not a runtime code) |
-
-## Plan conformance notes
-
-One item from the original plan is intentionally implemented differently and
-does not change observable behaviour:
-
-- **Test harness**: the plan lists `tests/bats/*.bats` and
-  `tests/docker/scenarios/*`. The tool uses `tests/unit.sh` plus
-  `tests/integration/{run,ufw,firewalld,connectivity}.sh`, driven by
-  `tests/run.sh` / `make test-unit|test-integration`, covering the same
-  behaviour (parsing, inheritance, hashing, shrink guard, all backends,
-  fail2ban, lifecycle, crash recovery, install/upgrade, connectivity).
-
-Default-deny verification is out of scope (plan non-goals) and an nftables
-`accept` is not final across base chains in different tables; see the README.

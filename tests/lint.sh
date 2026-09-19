@@ -19,10 +19,12 @@ SCRIPTS=(
   "$ROOT/tests/run.sh"
   "$ROOT/tests/lint.sh"
   "$ROOT/tests/unit.sh"
-  "$ROOT/tests/integration/run.sh"
-  "$ROOT/tests/integration/ufw.sh"
-  "$ROOT/tests/integration/firewalld.sh"
-  "$ROOT/tests/integration/connectivity.sh"
+  "$ROOT/tests/bats/run.sh"
+  "$ROOT/tests/bats/helper.bash"
+  "$ROOT/tests/docker/scenarios/run.sh"
+  "$ROOT/tests/docker/scenarios/ufw.sh"
+  "$ROOT/tests/docker/scenarios/firewalld.sh"
+  "$ROOT/tests/docker/scenarios/connectivity.sh"
 )
 
 find_bash4() {

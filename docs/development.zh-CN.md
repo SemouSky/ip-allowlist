@@ -34,10 +34,12 @@ make integration DISTRO=ubuntu-22.04
 
 ## 测试结构
 
-- `tests/unit.sh` — 纯函数测试：IPv4/IPv6 校验、规范化、合并、规范化处理、fail2ban 规范化、配置解析、路径与 JSON 辅助函数、到期间隔逻辑。
-- `tests/integration/run.sh` — 容器内端到端测试：真实 `nft` 表、幂等性、变更检测、非法条目过滤、`min_entries`、禁用与移除来源、status/sources 输出、fail2ban 联合与 drop-in 移除。
-- `tests/integration/ufw.sh` — 容器内 ufw 后端测试。
-- `tests/integration/firewalld.sh` — 容器内 firewalld 后端测试（需要 dbus）。
+- `tests/bats/*.bats` — 单元测试（bats）：配置解析、时长、IPv4/IPv6 校验与规范化、合并、规范化处理（严格/宽松）、规则参数、后端规则生成。
+- `tests/bats/run.sh` — 运行 bats 套件；无 bats 时回退到 `tests/unit.sh`。
+- `tests/unit.sh` — 纯 bash 回退，覆盖同样的纯函数。
+- `tests/docker/scenarios/run.sh` — nft 端到端场景：幂等、变更检测、严格解析、`min_entries`、禁用/移除来源、status/sources、fail2ban 联合、后端切换、快照、崩溃恢复、安装卸载。
+- `tests/docker/scenarios/ufw.sh`、`firewalld.sh` — 各后端场景。
+- `tests/docker/scenarios/connectivity.sh` — veth/netns 数据面检查。
 - `tests/docker/<distro>/Dockerfile` — 各发行版镜像。
 
 ## 新增防火墙后端

@@ -9,6 +9,7 @@ RUN dnf install -y --allowerasing \
       dbus-daemon \
       iproute \
       iputils \
+      bats \
       procps-ng \
  && dnf clean all
 

@@ -39,14 +39,18 @@ should be run in a container.
 
 ## Test structure
 
-- `tests/unit.sh` — pure-function tests: IPv4/IPv6 validation, normalization,
-  merging, canonicalization, fail2ban normalization, config parsing, path and
-  JSON helpers, due-interval logic.
-- `tests/integration/run.sh` — end-to-end under a container: real `nft` table,
-  idempotency, change detection, invalid filtering, `min_entries`, disabled and
-  removed sources, status/sources output, fail2ban union and drop-in removal.
-- `tests/integration/ufw.sh` — ufw backend under a container.
-- `tests/integration/firewalld.sh` — firewalld backend under a container (needs dbus).
+- `tests/bats/*.bats` — unit tests (bats): config parsing, durations, IPv4/IPv6
+  validation and normalization, merging, canonicalization (strict/lenient),
+  rule parameters, backend rule generation.
+- `tests/bats/run.sh` — runs the bats suite, or falls back to
+  `tests/unit.sh` when bats is unavailable.
+- `tests/unit.sh` — plain-bash fallback covering the same pure functions.
+- `tests/docker/scenarios/run.sh` — end-to-end nft scenario: idempotency, change
+  detection, strict parsing, `min_entries`, disabled/removed sources,
+  status/sources, fail2ban union, backend switch, snapshots, crash recovery,
+  install/uninstall.
+- `tests/docker/scenarios/ufw.sh`, `firewalld.sh` — backend scenarios.
+- `tests/docker/scenarios/connectivity.sh` — veth/netns data-path check.
 - `tests/docker/<distro>/Dockerfile` — per-distro images.
 
 ## Adding a firewall backend

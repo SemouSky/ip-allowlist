@@ -16,6 +16,7 @@ RUN apt-get update \
       iproute2 \
       iputils-ping \
       shellcheck \
+      bats \
       procps \
  && rm -rf /var/lib/apt/lists/*
 

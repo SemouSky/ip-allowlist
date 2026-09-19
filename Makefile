@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-images hooks lint unit integration install uninstall clean help
+.PHONY: test test-unit test-bats test-integration test-images hooks lint unit integration install uninstall clean help
 
 VERSION := $(shell cat version.txt)
 DISTRO ?= ubuntu-24.04
@@ -9,7 +9,8 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  test              Lint plus unit and integration tests"
-	@echo "  test-unit         Run unit tests only"
+	@echo "  test-unit         Run unit tests (bats, falls back to tests/unit.sh)"
+	@echo "  test-bats         Run the bats suite directly"
 	@echo "  test-integration  Run integration tests only (podman/docker)"
 	@echo "  test-images       Pre-build the per-distro test images"
 	@echo "  hooks             Install the pre-commit git hook"
@@ -26,6 +27,9 @@ lint:
 
 test-unit:
 	@./tests/run.sh --unit
+
+test-bats:
+	@bats tests/bats/*.bats
 
 unit: test-unit
 

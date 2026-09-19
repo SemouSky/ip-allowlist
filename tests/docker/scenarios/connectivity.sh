@@ -13,7 +13,7 @@
 set -uo pipefail
 export IP_ALLOWLIST_SKIP_UPDATE_CHECK=1
 
-ROOT="$(cd -P "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd -P "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
 CLI="$ROOT/ip-allowlist"
 
 PASS=0

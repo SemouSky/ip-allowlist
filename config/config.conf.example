@@ -1,82 +1,165 @@
 # ip-allowlist main configuration
-# Format: strict key=value, one per line. '#' starts a comment. Unknown keys
-# are rejected. Values may be quoted. Paths without a leading '/' are relative
-# to this file's directory. Path values must not contain spaces.
+# Format: strict key=value, one per line. '#' starts a comment (also inline
+# after a value). Unknown keys are rejected. Values may be quoted; quote a value
+# to keep a literal '#'. Paths without a leading '/' are relative to this file's
+# directory and must not contain spaces.
+#
+# Override legend (annotated on every key below):
+#   [main-only]           can only be set here
+#   [source-overridable]  a source may override it in sources.d/*.conf; when the
+#                         source omits the key it inherits the value set here
+#
+# Example sources: sources.d/example.conf.example (copy to <name>.conf) and
+# sources.d/cloudflare.conf.example.
+
+# --- schema ----------------------------------------------------------------
+# schema_version [main-only]
+#   Config schema version. Missing means the current version; an older value
+#   runs migrations; a newer value is rejected so an old build cannot misread it.
+# schema_version=1
 
 # --- targets ---------------------------------------------------------------
-# firewall_enabled: master switch for the firewall target.
-#   true  -> apply the allow-list to firewall_backend. A source is applied only
-#            when the source itself is enabled AND its firewall_enabled is true
-#            (logical AND; see sources.d/*.conf).
-#   false -> the firewall target is a no-op: nothing is applied, and existing
-#            ip-allowlist firewall objects are NOT removed. Remove them with
-#            'ip-allowlist cleanup' (or 'ip-allowlist uninstall').
-#            firewall_backend may be omitted while this is false.
+# firewall_enabled [source-overridable]
+#   Master switch for the firewall target.
+#     true  -> apply the allow-list to firewall_backend. A source is applied only
+#              when the source itself is enabled AND its firewall_enabled is true
+#              (logical AND; see sources.d/*.conf).
+#     false -> the firewall target is a no-op: nothing is applied, and existing
+#              ip-allowlist firewall objects are NOT removed. Remove them with
+#              'ip-allowlist cleanup' (or 'ip-allowlist uninstall').
+#              firewall_backend may be omitted while this is false.
 firewall_enabled=true
-# fail2ban_enabled: master switch for the fail2ban target.
-#   true  -> manage '[DEFAULT] ignoreip' in fail2ban_ignoreip_file with the
-#            canonical union of every source whose (source) fail2ban_enabled is
-#            true, plus the user's own ignoreip entries (fail2ban_merge_existing).
-#   false -> the fail2ban target is a no-op: the existing drop-in is left
-#            untouched. Remove it with 'ip-allowlist cleanup' (or uninstall).
+# fail2ban_enabled [source-overridable]
+#   Master switch for the fail2ban target.
+#     true  -> manage '[DEFAULT] ignoreip' in fail2ban_ignoreip_file with the
+#              canonical union of every source whose (source) fail2ban_enabled is
+#              true, plus the user's own ignoreip entries (fail2ban_merge_existing).
+#     false -> the fail2ban target is a no-op: the existing drop-in is left
+#              untouched. Remove it with 'ip-allowlist cleanup' (or uninstall).
 fail2ban_enabled=false
-# If both targets are off, or the selected backend tool is missing/not running,
-# 'sync' is a no-op and exits 0.
-firewall_backend=nft              # nft | ufw | firewalld (required when firewall_enabled=true).
-                                  # The installer preselects an active ufw/firewalld, else nft.
-allow_conflicting_firewall=false  # true: proceed even if another manager is active
+# firewall_backend [main-only]
+#   nft | ufw | firewalld. Required when firewall_enabled=true. There is no
+#   auto-detection at runtime; the installer preselects a running ufw/firewalld,
+#   then one that is enabled, otherwise nft.
+firewall_backend=nft
+# allow_conflicting_firewall [main-only]
+#   true: proceed even when another firewall manager is active (overridable per
+#   run with --force).
+allow_conflicting_firewall=false
 
 # --- sources ---------------------------------------------------------------
+# sources_dir [main-only]
+#   Directory scanned for *.conf source files.
 sources_dir=/etc/ip-allowlist/sources.d
-allow_empty_sources=false         # true: allow clearing everything when no source is active
+# allow_empty_sources [main-only]
+#   true: allow a run to clear everything when no source is active (also possible
+#   per run with --allow-empty).
+allow_empty_sources=false
 
-# --- default allow rules (a source may override any of these) --------------
-allow_ports=80,443                # 443 | 80,443 | 20000-40000 | all
-allow_protocol=tcp+udp            # tcp | udp | tcp+udp (ignored when allow_ports=all)
+# --- default allow rules ---------------------------------------------------
+# allow_ports [source-overridable]
+#   443 | 80,443 | 20000-40000 | all. "all" allows every port and ignores
+#   allow_protocol.
+allow_ports=80,443
+# allow_protocol [source-overridable]
+#   tcp | udp | tcp+udp. Ignored when allow_ports=all.
+allow_protocol=tcp+udp
+# enable_ipv4 / enable_ipv6 [source-overridable]
+#   Drop that address family from the firewall (fail2ban still gets the full
+#   union). Both cannot be false.
 enable_ipv4=true
 enable_ipv6=true
+# ipv6_required [source-overridable]
+#   true: fail a source that yields no IPv6 entries.
 ipv6_required=false
-http_timeout=15                   # seconds
+# http_timeout [source-overridable]
+#   Seconds for the HTTP connect/overall timeout.
+http_timeout=15
+# http_retries [source-overridable]
+#   HTTP retry attempts.
 http_retries=3
+# user_agent [source-overridable]
+#   HTTP User-Agent sent with every fetch.
 user_agent=ip-allowlist
-min_entries=                      # empty -> 1; raise for large network sources
+# min_entries [source-overridable]
+#   Minimum canonical entries across the enabled families; empty means 1. Raise
+#   it for large network sources (Cloudflare publishes 15 v4 + 7 v6 ranges).
+min_entries=
+# max_shrink_ratio [source-overridable]
+#   0..1. A result that shrinks more than this is rejected and the previous
+#   values are kept (--force bypasses the guard).
 max_shrink_ratio=0.5
 
 # --- schedule and self-update ---------------------------------------------
-update_interval=1d                # default per-source fetch interval
-timer_interval=15m                # systemd timer cadence (unit generation)
+# update_interval [source-overridable]
+#   Default per-source fetch interval. Durations accept a bare number of seconds
+#   or an s/m/h/d/w suffix (for example 900, 15m, 1d).
+update_interval=1d
+# timer_interval [main-only]
+#   systemd timer cadence (cron fallback rounds it to minutes).
+timer_interval=15m
+# update_on_boot [main-only]
+#   Enable the boot rebuild service (nft backend only).
 update_on_boot=true
-auto_update=false                 # false: only report new versions
+# auto_update [main-only]
+#   true: install a newer release during a run; false: only report it.
+auto_update=false
+# update_check_interval [main-only]
+#   How often to check for a new version.
 update_check_interval=1d
-repo=SemouSky/ip-allowlist        # used by 'upgrade'
+# repo [main-only]
+#   owner/name used by 'upgrade' (point it at a mirror if needed).
+repo=SemouSky/ip-allowlist
 
 # --- fail2ban --------------------------------------------------------------
+# fail2ban_ignoreip_file [main-only]
+#   Drop-in that receives the '[DEFAULT] ignoreip' union.
 fail2ban_ignoreip_file=/etc/fail2ban/jail.d/zz-ip-allowlist.local
+# fail2ban_merge_existing [main-only]
+#   true: keep the user's own ignoreip entries in the union; false: replace them
+#   with only the ip-allowlist union.
 fail2ban_merge_existing=true
 
 # --- firewalld -------------------------------------------------------------
-firewalld_zone=                   # empty -> firewalld default zone
+# firewalld_zone [main-only]
+#   Target zone; empty uses firewalld's default zone.
+firewalld_zone=
 
-# --- paths and locking -----------------------------------------------------
+# --- paths, locking, retention --------------------------------------------
+# state_dir [main-only]
+#   State, cache and snapshot directory.
 state_dir=/var/lib/ip-allowlist
+# snapshot_retention [main-only]
+#   How many snapshots to keep per source (and per backend).
 snapshot_retention=3
+# lock_file [main-only]
+#   flock target serialising runs (timer runs skip when it is held).
 lock_file=/run/ip-allowlist.lock
-lock_wait=30                      # seconds to wait for the lock on manual runs
+# lock_wait [main-only]
+#   Seconds a manual run waits for the lock.
+lock_wait=30
 
 # --- logging ---------------------------------------------------------------
-log_level=info                    # debug | info | warn | error
-# log_target: auto | stdout | file | syslog | none (comma separated).
-#   auto    -> log to stdout/stderr only. Under systemd that means the journal
-#              (view with: journalctl -u ip-allowlist.service -f); when run from
-#              a terminal it is the terminal. 'auto' never writes a file.
-#   stdout  -> same destination as auto, stated explicitly.
-#   file    -> append to log_file (requires log_file below).
-#   syslog  -> send to syslog via logger (tag ip-allowlist).
-#   none    -> no log output.
-# Combine to fan out, e.g. log_target=stdout,file.
+# log_level [main-only]
+#   debug | info | warn | error (--verbose/--quiet override it per run).
+log_level=info
+# log_target [main-only]
+#   auto | stdout | file | syslog | none (comma separated).
+#     auto   -> stdout/stderr only: the systemd journal under systemd
+#               (journalctl -u ip-allowlist.service -f), the terminal when run
+#               interactively. 'auto' never writes a file.
+#     stdout -> same destination as auto, stated explicitly.
+#     file   -> append to log_file (required below).
+#     syslog -> send to syslog via logger (tag ip-allowlist).
+#     none   -> no log output.
+#   Combine to fan out, e.g. log_target=stdout,file.
 log_target=auto
-log_file=                         # required when log_target includes 'file'
-log_format=text                   # text | json
+# log_file [main-only]
+#   Required when log_target includes 'file'.
+log_file=
+# log_format [main-only]
+#   text | json (json adds ts/level/component/run_id/msg per line).
+log_format=text
 
-# --- config schema (optional) ---------------------------------------------
-# schema_version=1
+# If both targets are off, or the selected backend tool is missing/not running,
+# 'sync' is a no-op and exits 0.

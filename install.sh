@@ -321,6 +321,10 @@ install_config() {
   else
     log "existing config preserved: $CONFIG_DIR/config.conf (detected backend: $(detect_backend))"
   fi
+  # Ship the source templates (inert: only *.conf is loaded) for discoverability.
+  if [[ -f "$SRC_DIR/config/sources.d/example.conf.example" ]]; then
+    install -m 0640 "$SRC_DIR/config/sources.d/example.conf.example" "$SOURCES_DIR/example.conf.example"
+  fi
   if [[ ! -f "$SOURCES_DIR/cloudflare.conf" ]]; then
     local tmpl=""
     if [[ -f "$SRC_DIR/config/sources.d/cloudflare.conf.example" ]]; then

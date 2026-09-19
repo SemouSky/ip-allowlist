@@ -21,6 +21,7 @@ check_file() {
 
 check_file "$ROOT/config/config.conf.example"
 check_file "$ROOT/config/sources.d/cloudflare.conf.example"
+check_file "$ROOT/config/sources.d/example.conf.example"
 
 if (( status == 0 )); then
   echo "config keys documented"

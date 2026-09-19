@@ -113,7 +113,29 @@ Durations accept a bare number (seconds) or an `s`/`m`/`h`/`d`/`w` suffix.
 Combine to fan out, for example `log_target=stdout,file` writes to both the
 journal/terminal and the log file.
 
+### Which keys a source can override
+
+Every key in the example config is annotated `[main-only]` or
+`[source-overridable]`. A source may override exactly these keys (omitting one
+inherits the value from this file):
+
+`allow_ports`, `allow_protocol`, `enable_ipv4`, `enable_ipv6`, `ipv6_required`,
+`firewall_enabled`, `fail2ban_enabled`, `update_interval`, `http_timeout`,
+`http_retries`, `user_agent`, `min_entries`, `max_shrink_ratio`.
+
+Everything else (`firewall_backend`, `allow_conflicting_firewall`, `sources_dir`,
+`allow_empty_sources`, `fail2ban_ignoreip_file`, `fail2ban_merge_existing`,
+`firewalld_zone`, `state_dir`, `snapshot_retention`, `lock_file`, `lock_wait`,
+`log_*`, `timer_interval`, `update_on_boot`, `auto_update`,
+`update_check_interval`, `repo`, `schema_version`) is **main-only**; a source
+file that sets one of them is rejected as an unknown key.
+
 ## Source configs: `sources.d/*.conf`
+
+Start from `sources.d/example.conf.example` (a fully commented template for
+`http` and `file` sources) or `sources.d/cloudflare.conf.example`, copy it to
+`<name>.conf` and edit it. Only `*.conf` files are loaded, so the shipped
+`.example` files are inert.
 
 | Key | Values | Default |
 |-----|--------|---------|

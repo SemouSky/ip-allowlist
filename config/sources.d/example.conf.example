@@ -1,0 +1,67 @@
+# Example source configuration - copy this file and edit it.
+#
+#   sudo cp /etc/ip-allowlist/sources.d/example.conf.example \
+#            /etc/ip-allowlist/sources.d/my-source.conf
+#   sudo editor /etc/ip-allowlist/sources.d/my-source.conf
+#   sudo ip-allowlist check --source my-source     # validate, no changes
+#   sudo ip-allowlist sync                         # apply
+#
+# Only files ending in .conf are loaded; this .example file is inert.
+#
+# Required keys: name, type, and either urls (type=http) or paths (type=file).
+# Every other key is optional and, when omitted, inherits the main config value.
+# Unknown keys are rejected.
+
+# --- identity (required) --------------------------------------------------
+# Unique name, ^[a-z][a-z0-9_-]{0,15}$; used for firewall object names and
+# state files. Must not collide with another source, including after dashes and
+# underscores are normalised for firewall object names.
+name=example
+
+# false keeps the config but removes the source from the firewall, fail2ban and
+# the orphan cleanup (its cached entries are dropped on the next sync).
+enabled=false
+
+# --- location (required: exactly one of the two forms) --------------------
+# http: one or more URLs, space or comma separated.
+type=http
+urls=https://www.example.com/ranges-v4 https://www.example.com/ranges-v6
+# file: one or more local paths (space separated; relative to the config dir).
+# type=file
+# paths=/etc/ip-allowlist/internal-ranges.txt
+
+# Content format; "text" is the only supported value in v1.
+format=text
+
+# --- allow rules (optional; inherit the main config) ----------------------
+# "all" allows every port from these addresses. A list (443, 80,443,
+# 20000-40000) narrows the rule; allow_protocol is ignored while this is "all".
+# allow_ports=80,443
+# allow_protocol=tcp+udp
+
+# --- per-source target switches (optional; inherit the main config) -------
+# Logical AND with the main switches: a source only reaches a target when both
+# the main switch and the source switch are true.
+#   firewall_enabled=false keeps this source out of the firewall (its objects
+#   are removed if it had been applied) while its ranges still feed fail2ban.
+#   fail2ban_enabled=false keeps this source out of the ignoreip union while it
+#   can still be applied to the firewall.
+# firewall_enabled=true
+# fail2ban_enabled=true
+
+# --- address families (optional; inherit the main config) -----------------
+# enable_ipv4=false drops IPv4 entries from the firewall (fail2ban still gets
+# the full union). ipv6_required=true fails the source when it has no IPv6.
+# enable_ipv4=true
+# enable_ipv6=true
+# ipv6_required=false
+
+# --- refresh and safety thresholds (optional; inherit the main config) ----
+# update_interval=1d
+# min_entries=1
+# max_shrink_ratio=0.5
+
+# --- HTTP options (optional; inherit the main config) --------------------
+# http_timeout=15
+# http_retries=3
+# user_agent=ip-allowlist

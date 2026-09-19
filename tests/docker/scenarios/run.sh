@@ -103,12 +103,17 @@ mkdir -p "$EX/sources.d"
 cp "$ROOT/config/config.conf.example" "$EX/config.conf"
 sed -i "s#^sources_dir=.*#sources_dir=$EX/sources.d#; s#^state_dir=.*#state_dir=$EX/state#; s#^log_file=.*#log_file=#" "$EX/config.conf"
 printf 'name=cf\nenabled=true\ntype=file\npaths=/dev/null\nmin_entries=0\n' >"$EX/sources.d/cf.conf"
+# both shipped source templates must be loadable as-is
+cp "$ROOT/config/sources.d/cloudflare.conf.example" "$EX/sources.d/cloudflare.conf"
+cp "$ROOT/config/sources.d/example.conf.example" "$EX/sources.d/example.conf"
 if "$CLI" --config "$EX/config.conf" sources >"$EX/out" 2>&1; then
   pass "shipped example config parses"
 else
   fail "shipped example config parses (see $EX/out)"
   cat "$EX/out" >&2
 fi
+assert_contains "shipped cloudflare template parses" "$(cat "$EX/out")" "cloudflare"
+assert_contains "shipped example source template parses" "$(cat "$EX/out")" "example"
 
 # ---------------------------------------------------------------------------
 # 1. Initial sync

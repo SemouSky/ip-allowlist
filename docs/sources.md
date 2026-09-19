@@ -105,6 +105,13 @@ canonicalization, `min_entries` (default 1) fails the source.
 These protect against upstream outages, truncated responses, or accidental
 empty files replacing a working allow-list.
 
+## Templates
+
+`sources.d/example.conf.example` is a fully commented template covering both
+`http` and `file` sources: copy it to `/etc/ip-allowlist/sources.d/<name>.conf`
+and edit. `sources.d/cloudflare.conf.example` is a ready-made Cloudflare source
+(disabled by default).
+
 ## Adding a source
 
 1. Create `/etc/ip-allowlist/sources.d/<name>.conf`.

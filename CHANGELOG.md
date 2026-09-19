@@ -85,6 +85,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `config/sources.d/example.conf.example`: a fully commented source template to
+  copy and edit (installed as an inert `.example` for discoverability)
+- every key in `config/config.conf.example` is annotated `[main-only]` or
+  `[source-overridable]`; the docs list which keys a source may override
 - Initial project scaffold
 - Phase 1 MVP implementation (nft backend, Cloudflare source, fail2ban integration)
 - Multi-source abstraction framework
@@ -107,6 +111,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Chinese translations of all documentation (`*.zh-CN.md`)
 
 ### Fixed
+- the shipped cloudflare source example lost `allow_ports`/`allow_protocol` in
+  an earlier docs rewrite; both are restored
 - `upgrade` requested `ip-allowlist-<ver>.tar.gz` while releases publish
   `ip-allowlist-v<ver>.tar.gz`, so every update failed with HTTP 404; the
   download now tries the current asset name, the previous name and the source

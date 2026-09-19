@@ -99,7 +99,17 @@
 
 可组合以同时输出，例如 `log_target=stdout,file` 会同时写 journal/终端与日志文件。
 
+### 哪些键可被来源覆盖
+
+示例配置中每个键都标注了 `[main-only]`（仅主配置）或 `[source-overridable]`（来源可覆盖）。来源**只能**覆盖以下键（省略即继承主配置的值）：
+
+`allow_ports`、`allow_protocol`、`enable_ipv4`、`enable_ipv6`、`ipv6_required`、`firewall_enabled`、`fail2ban_enabled`、`update_interval`、`http_timeout`、`http_retries`、`user_agent`、`min_entries`、`max_shrink_ratio`。
+
+其余键（`firewall_backend`、`allow_conflicting_firewall`、`sources_dir`、`allow_empty_sources`、`fail2ban_ignoreip_file`、`fail2ban_merge_existing`、`firewalld_zone`、`state_dir`、`snapshot_retention`、`lock_file`、`lock_wait`、`log_*`、`timer_interval`、`update_on_boot`、`auto_update`、`update_check_interval`、`repo`、`schema_version`）为 **main-only**；来源文件若设置它们会作为未知键被拒绝。
+
 ## 来源配置：`sources.d/*.conf`
+
+可从 `sources.d/example.conf.example`（完整的 http/file 模板）或 `sources.d/cloudflare.conf.example` 复制为 `<name>.conf` 后修改。只有 `*.conf` 会被加载，随包的 `.example` 文件不会生效。
 
 | 键 | 取值 | 默认 |
 |-----|--------|---------|

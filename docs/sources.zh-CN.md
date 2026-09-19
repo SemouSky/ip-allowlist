@@ -87,6 +87,10 @@ enable_ipv6=false
 
 这些阈值用于防止上游故障、响应被截断，或用意外空文件替换掉可用的允许列表。
 
+## 模板
+
+`sources.d/example.conf.example` 是完整注释模板，涵盖 `http` 与 `file` 两种类型：复制为 `/etc/ip-allowlist/sources.d/<name>.conf` 后修改即可。`sources.d/cloudflare.conf.example` 是现成的 Cloudflare 来源（默认禁用）。
+
 ## 添加来源
 
 1. 创建 `/etc/ip-allowlist/sources.d/<name>.conf`。

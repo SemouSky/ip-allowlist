@@ -206,6 +206,10 @@ allow manual rollback.
   connectivity test covers the data path instead.
 - **Legacy backends.** `iptables`/`ipset` are not implemented; the backend set
   is `nft`, `ufw` and `firewalld`.
+- **Backend switch ordering.** The new backend is applied first and the
+  previous backend is cleaned afterwards (the plan describes cleaning first).
+  This avoids a window with no allow-list in between; if the clean-up fails the
+  run exits non-zero and `status` reports `residual: <backend>`.
 - **No integrity verification of downloads.** Online installs use the source
   archive without SHA256/GPG verification (Release assets include
   `SHA256SUMS`, and `--from-tarball`/`--from-dir` support offline installs).

@@ -48,6 +48,7 @@ OFFLINE=0
 AUTO_UPDATE_FAILED=0
 UPGRADE_SYNC=0
 HELP_TOPIC=""
+PREV_CLEANUP_INCOMPLETE=0
 UPGRADE_VERSION=""
 FROM_TARBALL=""
 FROM_DIR=""
@@ -625,6 +626,21 @@ backend_status() {
   esac
 }
 
+# Keep the boot rebuild service in sync with the configured backend.
+adjust_boot_service() {
+  have systemctl || return 0
+  local marker
+  marker="$(dirname -- "$CONFIG_FILE")/update-on-boot"
+  if [[ "$BACKEND" == "nft" && "$UPDATE_ON_BOOT" == "true" ]]; then
+    : >"$marker"
+    systemctl enable ip-allowlist-boot.service >/dev/null 2>&1 \
+      || log_warn "failed to enable ip-allowlist-boot.service"
+  else
+    rm -f -- "$marker"
+    systemctl disable ip-allowlist-boot.service >/dev/null 2>&1 || true
+  fi
+}
+
 # Verify the applied firewall state matches the desired state.
 backend_verify() {
   case "$BACKEND" in
@@ -713,6 +729,13 @@ cleanup_previous_backend() {
   is_valid_backend "$backend" || return 0
   [[ "$backend" == "$BACKEND" ]] && return 0
   log_info "removing objects left by previous backend: $backend"
+
+  # Without the previous backend's tool we cannot clean or verify it.
+  case "$backend" in
+    nft) have nft || { log_warn "nft not available; cannot clean previous nft objects"; PREV_CLEANUP_INCOMPLETE=1; return 0; } ;;
+    ufw) have ufw || { log_warn "ufw not available; cannot clean previous ufw rules"; PREV_CLEANUP_INCOMPLETE=1; return 0; } ;;
+    firewalld) have firewall-cmd || { log_warn "firewall-cmd not available; cannot clean previous firewalld objects"; PREV_CLEANUP_INCOMPLETE=1; return 0; } ;;
+  esac
   case "$backend" in
     nft)
       (
@@ -848,9 +871,21 @@ validate_source_filter() {
 # ---------------------------------------------------------------------------
 
 cmd_version() {
+  # 'version' runs before the config is loaded, so resolve state_dir locally.
+  local sd="" cfg src=""
+  cfg="${CONFIG_FILE:-${IP_ALLOWLIST_CONFIG:-/etc/ip-allowlist/config.conf}}"
+  if [[ -f "$cfg" ]]; then
+    local base
+    base=$(cd -P "$(dirname -- "$cfg")" && pwd)
+    sd=$(sed -n 's/^[[:space:]]*state_dir[[:space:]]*=[[:space:]]*//p' "$cfg" 2>/dev/null | tail -n1 | tr -d '\r' | tr -d '"'"'"'')
+    [[ -n "$sd" ]] || sd="/var/lib/ip-allowlist"
+    [[ "$sd" == /* ]] || sd="$base/$sd"
+  else
+    sd="/var/lib/ip-allowlist"
+  fi
   local source=""
-  if [[ -f "$STATE_DIR/install-source" ]]; then
-    source=$(tr -d '[:space:]' <"$STATE_DIR/install-source" 2>/dev/null || true)
+  if [[ -f "$sd/install-source" ]]; then
+    source=$(tr -d '[:space:]' <"$sd/install-source" 2>/dev/null || true)
   fi
   if (( JSON_OUT == 1 )); then
     printf '{"name":"ip-allowlist","version":"%s","install_source":"%s"}\n' \
@@ -1051,6 +1086,7 @@ cmd_sync() {
       if [[ -f "$STATE_DIR/current/${name}.ips" || -f "$STATE_DIR/rules/${name}.conf" ]] \
         || state_known_has "$name"; then
         log_info "source $name: disabled, removing from firewall"
+        state_snapshot_source "$name"
         state_remove_source "$name"
         state_known_remove "$name"
         FIREWALL_REMOVED_SOURCES+=("$name")
@@ -1109,6 +1145,7 @@ cmd_sync() {
       done
       if (( known == 0 )); then
         log_info "source $orphan: no longer configured, removing from firewall"
+        state_snapshot_source "$orphan"
         rm -f -- "$current_file"
         state_remove_source "$orphan"
         state_known_remove "$orphan"
@@ -1127,6 +1164,7 @@ cmd_sync() {
       done
       if (( in_cfg == 0 )); then
         log_info "source $kname: no longer configured, removing from firewall"
+        state_snapshot_source "$kname"
         state_remove_source "$kname"
         state_known_remove "$kname"
         FIREWALL_REMOVED_SOURCES+=("$kname")
@@ -1250,15 +1288,25 @@ cmd_sync() {
     atomic_install "$fp_tmp" "$STATE_DIR/desired.hash" "0600"
     state_set_backend "$BACKEND"
     if (( backend_changed == 1 )); then
+      PREV_CLEANUP_INCOMPLETE=0
       cleanup_previous_backend "$prev_backend" "$prev_firewalld_zone"
-      if ! backend_verify_previous_cleaned "$prev_backend" "$prev_firewalld_zone"; then
+      if (( PREV_CLEANUP_INCOMPLETE == 1 )); then
+        if ! backend_verify_previous_cleaned "$prev_backend" "$prev_firewalld_zone"; then
+          log_warn "previous backend $prev_backend artifacts could not be verified as removed"
+          state_set_key "firewall.residual" "$prev_backend"
+        else
+          state_set_key "firewall.residual" ""
+        fi
+      elif ! backend_verify_previous_cleaned "$prev_backend" "$prev_firewalld_zone"; then
         log_error "previous backend $prev_backend still has ip-allowlist objects"
         state_set_key "firewall.residual" "$prev_backend"
         state_clear_in_progress
         lock_release
         exit 2
+      else
+        state_set_key "firewall.residual" ""
       fi
-      state_set_key "firewall.residual" ""
+      adjust_boot_service
     fi
   else
     log_info "no source changes; firewall unchanged"

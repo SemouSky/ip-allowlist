@@ -687,6 +687,13 @@ if [[ -x "$ROOT/install.sh" ]]; then
   fi
   installed_version="$(/usr/local/sbin/ip-allowlist version 2>&1 || true)"
   assert_contains "installed binary runs" "$installed_version" "ip-allowlist"
+  if [[ -f /etc/systemd/system/ip-allowlist.timer ]]; then
+    assert_contains "installer generates the timer from timer_interval" \
+      "$(cat /etc/systemd/system/ip-allowlist.timer)" "OnUnitActiveSec="
+  else
+    skip "timer unit generation (no systemd unit installed)"
+  fi
+  assert_contains "install records the install source" "$installed_version" "installed from:"
 
   # Bootstrap mode: reading the installer from stdin leaves BASH_SOURCE unset;
   # --from-dir keeps it offline while exercising that code path.

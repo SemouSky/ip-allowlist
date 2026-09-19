@@ -97,6 +97,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only on first run, backend switch, or a missing table
 - `help [command]` prints per-command help; `upgrade --sync` runs a sync after
   upgrading
+- snapshots are taken before removing a disabled/removed source; a missing old
+  backend tool is recorded as `residual` instead of a hard failure; the boot
+  service is enabled/disabled on backend switch; the systemd timer is generated
+  from `timer_interval`; `version` records the build commit when available and
+  resolves `state_dir` before the config is loaded
 - unit tests ported to bats (`tests/bats/*.bats`, with `tests/unit.sh` as a
   fallback when bats is unavailable); integration scenarios moved to
   `tests/docker/scenarios/*.sh`

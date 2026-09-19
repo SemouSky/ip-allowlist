@@ -148,4 +148,5 @@ rule family="ipv4" source ipset="ia-<source>-v4-<hash>" accept
 
 - **不接管 default-deny。** 本工具只添加放行规则、从不设置基础链策略，因此它本身无法让未列出来源被拒。此外，nftables 的 `accept` 在不同表的 base chain 之间不是终结判定，独立的 default-deny 链同样会丢弃已放行流量。启用 default-deny 的主机必须在其自身策略中放行这些来源网段。计划中“非 CF 被既有策略拒绝”这一验收项因此有意不满足；改由 veth/netns 连通性测试覆盖数据面。
 - **遗留后端。** 不实现 `iptables`/`ipset`；后端为 `nft`、`ufw`、`firewalld`。
+- **后端切换顺序。** 先应用新后端，再清理旧后端（计划描述为先清理）。这样避免中间出现允许列表为空的窗口；若清理失败，运行以非 0 退出，且 `status` 显示 `residual: <backend>`。
 - **下载不做完整性校验。** 在线安装使用源码归档，不做 SHA256/GPG 校验（Release 资产提供 `SHA256SUMS`，并可用 `--from-tarball`/`--from-dir` 离线安装）。

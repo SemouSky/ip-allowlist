@@ -325,8 +325,31 @@ install_systemd() {
   fi
   install -d -m 0755 "$SYSTEMD_DIR"
   install -m 0644 "$SRC_DIR/systemd/ip-allowlist.service" "$SYSTEMD_DIR/ip-allowlist.service"
-  install -m 0644 "$SRC_DIR/systemd/ip-allowlist.timer"   "$SYSTEMD_DIR/ip-allowlist.timer"
   install -m 0644 "$SRC_DIR/systemd/ip-allowlist-boot.service" "$SYSTEMD_DIR/ip-allowlist-boot.service"
+
+  # The timer interval comes from the config; regenerate the unit so changes to
+  # timer_interval take effect on the next install/upgrade.
+  local interval
+  interval=$(sed -n 's/^[[:space:]]*timer_interval[[:space:]]*=[[:space:]]*//p' "$CONFIG_DIR/config.conf" 2>/dev/null | tail -n1)
+  interval=$(printf '%s' "$interval" | tr -d '\r' | tr -d '"'"'"'')
+  [[ "$interval" =~ ^[0-9]+[smhdw]?$ ]] || interval=15m
+  cat >"$SYSTEMD_DIR/ip-allowlist.timer" <<EOF
+[Unit]
+Description=Run ip-allowlist periodically
+Documentation=https://github.com/SemouSky/ip-allowlist
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=${interval}
+AccuracySec=1min
+RandomizedDelaySec=30s
+Persistent=true
+Unit=ip-allowlist.service
+
+[Install]
+WantedBy=timers.target
+EOF
+  chmod 0644 "$SYSTEMD_DIR/ip-allowlist.timer"
 
   # The boot rebuild service only applies to the nft backend and is gated by
   # update_on_boot.
@@ -390,7 +413,16 @@ install_state_dir() {
   local version="0.0.0"
   [[ -f "$version_file" ]] && version=$(tr -d '[:space:]' <"$version_file")
   printf '%s\n' "$version" >"$STATE_DIR/version"
-  printf '%s@%s\n' "${REPO:-local}" "$version" >"$STATE_DIR/install-source"
+  local commit="" source
+  if command -v git >/dev/null 2>&1 && git -C "$SRC_DIR" rev-parse --short HEAD >/dev/null 2>&1; then
+    commit=$(git -C "$SRC_DIR" rev-parse --short HEAD 2>/dev/null || true)
+  fi
+  if [[ -n "$commit" ]]; then
+    source="${REPO:-local}@${version}+${commit}"
+  else
+    source="${REPO:-local}@${version}"
+  fi
+  printf '%s\n' "$source" >"$STATE_DIR/install-source"
 }
 
 install_log_file() {

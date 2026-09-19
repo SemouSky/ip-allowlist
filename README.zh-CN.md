@@ -71,6 +71,12 @@ ip-allowlist uninstall       # 卸载（--purge 同时清除数据）
 
 `allow_ports` 默认 `443`、`allow_protocol` 默认 `tcp+udp`；设为 `allow_ports=all` 可放行来源地址的所有端口。
 
+## 防火墙注意事项
+
+- nft 表使用 `policy accept`，只添加放行规则，不修改基础策略或其他规则。若主机启用 default-deny，需要在其自身策略中同时放行这些来源网段。
+- 在 nftables 中，`accept` 判定在不同表的 base chain 之间**不是终结**，因此独立的 default-deny 链仍可能丢弃已被放行的流量。
+- Docker 可能绕过 ufw/firewalld，详见各后端文档。
+
 ## 系统要求
 
 - Linux，bash 4.4+

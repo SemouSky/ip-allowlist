@@ -22,6 +22,7 @@ SCRIPTS=(
   "$ROOT/tests/integration/run.sh"
   "$ROOT/tests/integration/ufw.sh"
   "$ROOT/tests/integration/firewalld.sh"
+  "$ROOT/tests/integration/connectivity.sh"
 )
 
 find_bash4() {

@@ -100,7 +100,9 @@ table inet ip_allowlist { ... }
 
 `policy accept` means the table never drops traffic by itself. The base chain
 uses priority `filter`, so ordering relative to other managers (for example
-Docker) is not guaranteed; see the README. Tables created by releases before the
+Docker) is not guaranteed; see the README. Note that an nftables `accept` is not
+final across base chains in different tables, so a host default-deny policy must
+also allow the source ranges. Tables created by releases before the
 plan naming (`inet ip-allowlist`) are removed automatically.
 
 Sources that are disabled or removed from config have their `current/<name>.ips`

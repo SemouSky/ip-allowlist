@@ -90,6 +90,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - state files are written `0600`
 - ufw/firewalld configuration directories are snapshotted before apply and
   restored as a last-resort rollback; firewalld records its exact rich rules
+- veth/netns connectivity integration test; documented that nft `accept` is not
+  final across base chains and that default-deny is out of scope
 
 ## [0.0.0] - 2026-09-18
 

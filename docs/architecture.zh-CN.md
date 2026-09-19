@@ -93,7 +93,7 @@ delete table inet ip_allowlist
 table inet ip_allowlist { ... }
 ```
 
-`policy accept` 意味着该表本身不会丢包。基础 chain 使用 `filter` 优先级，因此与其他管理器（如 Docker）的相对顺序不保证，详见 README。采用计划命名之前版本创建的表（`inet ip-allowlist`）会被自动清理。
+`policy accept` 意味着该表本身不会丢包。基础 chain 使用 `filter` 优先级，因此与其他管理器（如 Docker）的相对顺序不保证，详见 README。另需注意：nftables 的 `accept` 在不同表的 base chain 之间不是终结判定，主机的 default-deny 策略需要同时放行这些来源网段。采用计划命名之前版本创建的表（`inet ip-allowlist`）会被自动清理。
 
 被禁用或从配置中删除的来源，其 `current/<name>.ips` 会被删除，从而在重新生成的表中被移除。
 

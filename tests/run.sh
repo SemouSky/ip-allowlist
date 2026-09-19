@@ -82,7 +82,7 @@ run_integration_local() {
   echo "==> integration tests (local)"
   bash "$ROOT/tests/integration/run.sh" || rc=1
   local script
-  for script in ufw firewalld; do
+  for script in ufw firewalld connectivity; do
     [ -f "$ROOT/tests/integration/$script.sh" ] || continue
     echo "==> $script integration tests"
     bash "$ROOT/tests/integration/$script.sh"

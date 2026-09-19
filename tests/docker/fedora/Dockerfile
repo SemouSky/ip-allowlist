@@ -8,6 +8,7 @@ RUN dnf install -y \
       firewalld \
       dbus-daemon \
       iproute \
+      iputils \
       procps-ng \
  && dnf clean all
 

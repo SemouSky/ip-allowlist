@@ -14,6 +14,7 @@ RUN apt-get update \
       dbus \
       iptables \
       iproute2 \
+      iputils-ping \
       shellcheck \
       procps \
  && rm -rf /var/lib/apt/lists/*

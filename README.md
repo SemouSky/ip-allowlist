@@ -72,6 +72,15 @@ ip-allowlist uninstall       # Uninstall (--purge to remove data)
 `allow_ports` defaults to `443` with `allow_protocol=tcp+udp`; set
 `allow_ports=all` to allow every port from the source addresses.
 
+## Firewall caveats
+
+- The nft table uses `policy accept` and only adds accept rules; it never
+  changes the base policy or other rules. A host that runs default-deny must
+  allow the source ranges in its own policy as well.
+- In nftables an `accept` verdict is not final across base chains in different
+  tables, so a separate default-deny chain can still drop allow-listed traffic.
+- Docker can bypass ufw/firewalld; see the backend documentation.
+
 ## Requirements
 
 - Linux with bash 4.4+

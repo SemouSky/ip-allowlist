@@ -15,8 +15,8 @@ and must not contain spaces.
 | Key | Values | Default | Description |
 |-----|--------|---------|-------------|
 | `firewall_enabled` | boolean | `true` | Master switch for the firewall target |
-| `fail2ban_enabled` | boolean | `true` | Master switch for the fail2ban target |
-| `firewall_backend` | `nft`\|`ufw`\|`firewalld` | required* | Backend (required when `firewall_enabled=true`) |
+| `fail2ban_enabled` | boolean | `false` | Master switch for the fail2ban target |
+| `firewall_backend` | `nft`\|`ufw`\|`firewalld` | required* | Backend (required when `firewall_enabled=true`); the installer preselects a running ufw/firewalld, then one that is enabled, otherwise nft (and warns if the selected backend is not running) |
 | `allow_conflicting_firewall` | boolean | `false` | Proceed even if another manager is active |
 
 `firewall_enabled=false` / `fail2ban_enabled=false` make that target a no-op: it
@@ -35,7 +35,7 @@ A missing or unreadable `sources_dir` is a hard error; no cleanup is performed.
 
 | Key | Values | Default | Description |
 |-----|--------|---------|-------------|
-| `allow_ports` | `443`, `80,443`, `20000-40000`, `all` | `443` | Ports to allow |
+| `allow_ports` | `443`, `80,443`, `20000-40000`, `all` | `80,443` | Ports to allow |
 | `allow_protocol` | `tcp`\|`udp`\|`tcp+udp` | `tcp+udp` | Protocols (ignored when `allow_ports=all`) |
 | `enable_ipv4` / `enable_ipv6` | boolean | `true` | Address families |
 | `ipv6_required` | boolean | `false` | Fail a source when it has no IPv6 entries |
@@ -74,6 +74,21 @@ Durations accept a bare number (seconds) or an `s`/`m`/`h`/`d`/`w` suffix.
 | `log_file` | path | empty (required when `log_target` includes `file`) |
 | `log_format` | `text`\|`json` | `text` |
 | `schema_version` | integer | `1` |
+
+## Log destinations
+
+`log_target` selects one or more destinations (comma separated):
+
+- `auto` — write to stdout/stderr only. Under systemd that is the service
+  journal (`journalctl -u ip-allowlist.service -f`); when run interactively it
+  is the terminal. `auto` never writes a file.
+- `stdout` — the same destination as `auto`, stated explicitly.
+- `file` — append to `log_file` (required); also ship the logrotate config.
+- `syslog` — send to syslog via `logger` (tag `ip-allowlist`).
+- `none` — no log output.
+
+Combine to fan out, for example `log_target=stdout,file` writes to both the
+journal/terminal and the log file.
 
 ## Source configs: `sources.d/*.conf`
 

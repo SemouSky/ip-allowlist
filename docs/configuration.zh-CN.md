@@ -11,8 +11,8 @@
 | 键 | 取值 | 默认 | 说明 |
 |-----|--------|---------|-------------|
 | `firewall_enabled` | 布尔 | `true` | 防火墙目标总开关 |
-| `fail2ban_enabled` | 布尔 | `true` | fail2ban 目标总开关 |
-| `firewall_backend` | `nft`\|`ufw`\|`firewalld` | 必填* | 后端（`firewall_enabled=true` 时必填） |
+| `fail2ban_enabled` | 布尔 | `false` | fail2ban 目标总开关 |
+| `firewall_backend` | `nft`\|`ufw`\|`firewalld` | 必填* | 后端（`firewall_enabled=true` 时必填）；安装器会优先选择正在运行的 ufw/firewalld，其次是已启用的，否则 nft（若所选后端未在运行会给出告警） |
 | `allow_conflicting_firewall` | 布尔 | `false` | 有其他管理器活跃时仍继续 |
 
 `firewall_enabled=false` / `fail2ban_enabled=false` 表示该目标为 no-op：不下发，也**不清理**既有产物（需清理请用 `uninstall`）。
@@ -30,7 +30,7 @@
 
 | 键 | 取值 | 默认 | 说明 |
 |-----|--------|---------|-------------|
-| `allow_ports` | `443`、`80,443`、`20000-40000`、`all` | `443` | 放行端口 |
+| `allow_ports` | `443`、`80,443`、`20000-40000`、`all` | `80,443` | 放行端口 |
 | `allow_protocol` | `tcp`\|`udp`\|`tcp+udp` | `tcp+udp` | 协议（`allow_ports=all` 时忽略） |
 | `enable_ipv4` / `enable_ipv6` | 布尔 | `true` | 地址族 |
 | `ipv6_required` | 布尔 | `false` | 无 IPv6 条目时使来源失败 |
@@ -69,6 +69,18 @@
 | `log_file` | 路径 | 空（`log_target` 含 `file` 时必填） |
 | `log_format` | `text`\|`json` | `text` |
 | `schema_version` | 整数 | `1` |
+
+## 日志目标
+
+`log_target` 选择一个或多个目标（逗号分隔）：
+
+- `auto` — 仅输出到 stdout/stderr。在 systemd 下即服务日志（`journalctl -u ip-allowlist.service -f`）；在终端交互运行时即终端。**`auto` 不写文件。**
+- `stdout` — 与 `auto` 相同的目标，显式写法。
+- `file` — 追加到 `log_file`（必填）；同时使用随包 logrotate 配置。
+- `syslog` — 通过 `logger` 发送到 syslog（tag `ip-allowlist`）。
+- `none` — 不输出日志。
+
+可组合以同时输出，例如 `log_target=stdout,file` 会同时写 journal/终端与日志文件。
 
 ## 来源配置：`sources.d/*.conf`
 

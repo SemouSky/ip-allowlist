@@ -1,23 +1,18 @@
 # Cloudflare IP ranges source
 # Place in /etc/ip-allowlist/sources.d/cloudflare.conf
+# Disabled by default: enable it only if you actually put Cloudflare in front.
 
 name=cloudflare
-enabled=true
+enabled=false
 type=http
 urls=https://www.cloudflare.com/ips-v4 https://www.cloudflare.com/ips-v6
 format=text
-
-# Optional overrides of the main config defaults (omit to inherit):
-# allow_ports=443
-# allow_protocol=tcp+udp
-# enable_ipv4=true
-# enable_ipv6=true
-# ipv6_required=false
-# firewall_enabled=true
-# fail2ban_enabled=true
-# update_interval=1d
+allow_ports=all
+firewall_enabled=true
+fail2ban_enabled=true
+update_interval=7d
+min_entries=5
+# max_shrink_ratio=0.5
 # http_timeout=15
 # http_retries=3
 # user_agent=ip-allowlist
-min_entries=5
-# max_shrink_ratio=0.5

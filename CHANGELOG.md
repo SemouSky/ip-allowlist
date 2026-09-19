@@ -76,6 +76,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names on one line)
 
 ### Changed
+- the installer preselects `firewall_backend` from a running ufw/firewalld,
+  then one that is enabled, otherwise nft, and warns when the selection is not
+  running
+- defaults: `fail2ban_enabled=false`, `allow_ports=80,443`
+- the shipped cloudflare source example is `enabled=false` and sets
+  `allow_ports=all`, `firewall_enabled=true`, `fail2ban_enabled=true`,
+  `update_interval=7d`
+- documented the `log_target=auto` output chain
 - running `ip-allowlist` with no command now prints help instead of syncing
 - `uninstall` is built into the CLI; the separate uninstall.sh is removed
 - **BREAKING**: config now uses the planned flat keys

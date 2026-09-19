@@ -5,8 +5,9 @@
 
 # --- targets ---------------------------------------------------------------
 firewall_enabled=true
-fail2ban_enabled=true
-firewall_backend=nft              # nft | ufw | firewalld (required when firewall_enabled=true)
+fail2ban_enabled=false
+firewall_backend=nft              # nft | ufw | firewalld (required when firewall_enabled=true).
+                                  # The installer preselects an active ufw/firewalld, else nft.
 allow_conflicting_firewall=false  # true: proceed even if another manager is active
 
 # --- sources ---------------------------------------------------------------
@@ -14,7 +15,7 @@ sources_dir=/etc/ip-allowlist/sources.d
 allow_empty_sources=false         # true: allow clearing everything when no source is active
 
 # --- default allow rules (a source may override any of these) --------------
-allow_ports=443                   # 443 | 80,443 | 20000-40000 | all
+allow_ports=80,443                # 443 | 80,443 | 20000-40000 | all
 allow_protocol=tcp+udp            # tcp | udp | tcp+udp (ignored when allow_ports=all)
 enable_ipv4=true
 enable_ipv6=true
@@ -48,7 +49,16 @@ lock_wait=30                      # seconds to wait for the lock on manual runs
 
 # --- logging ---------------------------------------------------------------
 log_level=info                    # debug | info | warn | error
-log_target=auto                   # auto | stdout | file | syslog | none (comma separated)
+# log_target: auto | stdout | file | syslog | none (comma separated).
+#   auto    -> log to stdout/stderr only. Under systemd that means the journal
+#              (view with: journalctl -u ip-allowlist.service -f); when run from
+#              a terminal it is the terminal. 'auto' never writes a file.
+#   stdout  -> same destination as auto, stated explicitly.
+#   file    -> append to log_file (requires log_file below).
+#   syslog  -> send to syslog via logger (tag ip-allowlist).
+#   none    -> no log output.
+# Combine to fan out, e.g. log_target=stdout,file.
+log_target=auto
 log_file=                         # required when log_target includes 'file'
 log_format=text                   # text | json
 

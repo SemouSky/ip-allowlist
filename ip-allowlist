@@ -345,7 +345,7 @@ BACKEND=""
 # nft object names are fixed by the plan; kept internal (not config keys).
 
 FIREWALL_ENABLED="true"
-FAIL2BAN_ENABLED="true"
+FAIL2BAN_ENABLED="false"
 ALLOW_CONFLICTING_FIREWALL="false"
 ALLOW_EMPTY_SOURCES="false"
 
@@ -368,7 +368,7 @@ SNAPSHOT_RETENTION=3
 LOCK_FILE="/run/ip-allowlist.lock"
 LOCK_WAIT=30
 
-DEFAULT_ALLOW_PORTS="443"
+DEFAULT_ALLOW_PORTS="80,443"
 DEFAULT_ALLOW_PROTOCOL="tcp+udp"
 DEFAULT_ENABLE_IPV4="true"
 DEFAULT_ENABLE_IPV6="true"
@@ -379,7 +379,7 @@ DEFAULT_USER_AGENT="ip-allowlist"
 DEFAULT_MIN_ENTRIES=""
 DEFAULT_MAX_SHRINK_RATIO="0.5"
 DEFAULT_FIREWALL_ENABLED="true"
-DEFAULT_FAIL2BAN_ENABLED="true"
+DEFAULT_FAIL2BAN_ENABLED="false"
 
 locate_config() {
   if [[ -n "$CONFIG_FILE" ]]; then
@@ -425,7 +425,7 @@ load_main_config() {
 
   FIREWALL_ENABLED=$(normalize_bool "${MAIN[firewall_enabled]:-true}")
   validate_bool "firewall_enabled" "$FIREWALL_ENABLED" "$file"
-  FAIL2BAN_ENABLED=$(normalize_bool "${MAIN[fail2ban_enabled]:-true}")
+  FAIL2BAN_ENABLED=$(normalize_bool "${MAIN[fail2ban_enabled]:-false}")
   validate_bool "fail2ban_enabled" "$FAIL2BAN_ENABLED" "$file"
   ALLOW_CONFLICTING_FIREWALL=$(normalize_bool "${MAIN[allow_conflicting_firewall]:-false}")
   validate_bool "allow_conflicting_firewall" "$ALLOW_CONFLICTING_FIREWALL" "$file"
@@ -446,7 +446,7 @@ load_main_config() {
     is_valid_backend "$BACKEND" || die "config: invalid firewall_backend '$BACKEND'"
   fi
 
-  local ap="${MAIN[allow_ports]:-443}"
+  local ap="${MAIN[allow_ports]:-80,443}"
   valid_ports_spec "$ap" || die "config: invalid allow_ports '$ap'"
   DEFAULT_ALLOW_PORTS=$(normalize_ports "$ap")
   local apr="${MAIN[allow_protocol]:-tcp+udp}"

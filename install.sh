@@ -252,17 +252,71 @@ install_binary() {
   ln -sfn "$INSTALL_LIB/ip-allowlist" "$SYMLINK"
 }
 
+# Prefer an application-level firewall manager when one is present/active.
+detect_backend() {
+  # Prefer an application-level manager that is actually running, then one whose
+  # service is enabled; otherwise fall back to nft (always available).
+  if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    printf 'firewalld'; return 0
+  fi
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status:[[:space:]]*active'; then
+    printf 'ufw'; return 0
+  fi
+  if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-enabled --quiet firewalld 2>/dev/null; then
+      printf 'firewalld'; return 0
+    fi
+    if systemctl is-enabled --quiet ufw 2>/dev/null; then
+      printf 'ufw'; return 0
+    fi
+  fi
+  printf 'nft'
+}
+
+# Preselect firewall_backend in a freshly generated config.
+apply_detected_backend() {
+  local backend
+  backend=$(detect_backend)
+  if sed -i "s|^firewall_backend=.*|firewall_backend=${backend}            # preselected by the installer|" "$CONFIG_DIR/config.conf" 2>/dev/null; then
+    log "detected firewall backend: $backend"
+  fi
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status:[[:space:]]*active' \
+    && command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    warn "both ufw and firewalld are active; disable one or set allow_conflicting_firewall=true"
+  fi
+  # The selected manager may be installed/enabled but not running yet; syncing
+  # would then skip the firewall target, so say so explicitly.
+  case "$backend" in
+    firewalld)
+      if ! firewall-cmd --state >/dev/null 2>&1; then
+        warn "firewalld is selected but not running; start it: systemctl enable --now firewalld"
+      fi
+      ;;
+    ufw)
+      if ! ufw status 2>/dev/null | grep -qi '^Status:[[:space:]]*active'; then
+        warn "ufw is selected but not active; run: ufw enable"
+      fi
+      ;;
+    nft)
+      if ! command -v nft >/dev/null 2>&1; then
+        warn "nft is selected but 'nft' is not installed; install nftables before syncing"
+      fi
+      ;;
+  esac
+}
+
 install_config() {
   install -d -m 0750 "$CONFIG_DIR" "$SOURCES_DIR"
   if [[ ! -f "$CONFIG_DIR/config.conf" ]]; then
     if [[ -f "$SRC_DIR/config/config.conf.example" ]]; then
       install -m 0640 "$SRC_DIR/config/config.conf.example" "$CONFIG_DIR/config.conf"
+      apply_detected_backend
       log "installed default config: $CONFIG_DIR/config.conf"
     else
       warn "config template not found; create $CONFIG_DIR/config.conf manually"
     fi
   else
-    log "existing config preserved: $CONFIG_DIR/config.conf"
+    log "existing config preserved: $CONFIG_DIR/config.conf (detected backend: $(detect_backend))"
   fi
   if [[ ! -f "$SOURCES_DIR/cloudflare.conf" ]]; then
     local tmpl=""

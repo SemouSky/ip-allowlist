@@ -1,6 +1,7 @@
 FROM rockylinux/rockylinux:9
 
-RUN dnf install -y --allowerasing \
+RUN dnf install -y --allowerasing epel-release \
+ && dnf install -y --allowerasing \
       bash \
       coreutils \
       curl \

@@ -43,6 +43,17 @@ min_entries=1
 
 相对的 `paths` 会相对于主配置目录解析。
 
+## 目标开关
+
+每个来源可用 `firewall_enabled` / `fail2ban_enabled` 选择性地退出某个目标；它们与主开关是逻辑与，省略即继承主配置的值：
+
+```ini
+firewall_enabled=false   # 该来源不进入防火墙
+fail2ban_enabled=true    # 但仍参与 ignoreip 并集
+```
+
+被排除在防火墙之外的来源会在下次同步时移除其对象，但条目仍保留在缓存中以供 fail2ban 使用；被排除在 fail2ban 之外的来源仍可下发到防火墙。完整对照见[配置](configuration.zh-CN.md#目标开关的作用逻辑)。
+
 ## 规则参数
 
 来源可以覆盖主配置的放行规则参数：

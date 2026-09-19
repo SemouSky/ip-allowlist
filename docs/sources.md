@@ -49,6 +49,23 @@ min_entries=1
 
 A relative `paths` is resolved against the main config directory.
 
+## Target switches
+
+Each source can opt out of a target with `firewall_enabled` / `fail2ban_enabled`.
+They combine with the main switches using logical AND, and omitting them inherits
+the main value:
+
+```ini
+firewall_enabled=false   # keep this source out of the firewall
+fail2ban_enabled=true    # but still contribute to the ignoreip union
+```
+
+A source excluded from the firewall is removed from it on the next sync while its
+ranges stay cached for fail2ban; a source excluded from fail2ban can still be
+applied to the firewall. See
+[configuration](configuration.md#how-the-target-switches-work) for the full
+matrix.
+
 ## Rule parameters
 
 A source can override the main allow-rule parameters:

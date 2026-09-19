@@ -193,3 +193,19 @@ allow manual rollback.
 | 3    | Status UNKNOWN |
 | 64   | Usage error |
 | 77   | Tests skipped (not a runtime code) |
+
+## Non-goals and accepted deviations
+
+- **Default-deny is not managed.** The tool only adds accept rules and never
+  sets the base-chain policy, so it cannot make an unlisted source be rejected
+  by itself. In addition, an nftables `accept` is not final across base chains
+  in different tables, so a separate default-deny chain would also drop the
+  allow-listed traffic. Hosts that run default-deny must allow the source
+  ranges in their own policy. The plan's acceptance item "non-CF rejected by
+  the existing policy" is therefore intentionally not met; the veth/netns
+  connectivity test covers the data path instead.
+- **Legacy backends.** `iptables`/`ipset` are not implemented; the backend set
+  is `nft`, `ufw` and `firewalld`.
+- **No integrity verification of downloads.** Online installs use the source
+  archive without SHA256/GPG verification (Release assets include
+  `SHA256SUMS`, and `--from-tarball`/`--from-dir` support offline installs).

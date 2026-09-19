@@ -67,6 +67,21 @@ find_runtime() {
 
 STATUS=0
 
+# Map an exit code to a word for the final summary line.
+status_word() {
+  case "$1" in
+    0) printf 'PASS' ;;
+    77) printf 'SKIP' ;;
+    *) printf 'FAIL' ;;
+  esac
+}
+
+# Print the suite-level result so the tail of the log is never misleading.
+summary_line() {
+  local label="$1" code="$2"
+  printf '==> %s: %s\n' "$label" "$(status_word "$code")"
+}
+
 run_unit_local() {
   local bash4
   if ! bash4="$(find_bash4)"; then
@@ -113,12 +128,15 @@ run_in_container() {
 
 if [ "$MODE" = "unit" ]; then
   run_unit_local; STATUS=$?
+  summary_line "unit" "$STATUS"
 elif [ "$MODE" = "integration" ]; then
   if [ "$LOCAL" = "1" ] || [ "$INSIDE_CONTAINER" = "1" ]; then
     run_integration_local; STATUS=$?
+    summary_line "integration" "$STATUS"
   else
     if runtime="$(find_runtime)"; then
       run_in_container "$runtime"; STATUS=$?
+      summary_line "container" "$STATUS"
     else
       echo "==> integration tests skipped: no podman/docker available" >&2
       STATUS=77
@@ -132,9 +150,12 @@ else
     [ "$U" -eq 0 ] || STATUS=1
     [ "$I" -eq 0 ] || STATUS=1
     [ "$U" -eq 77 ] && [ "$I" -eq 77 ] && STATUS=77
+    summary_line "unit" "$U"
+    summary_line "integration" "$I"
   else
     if runtime="$(find_runtime)"; then
       run_in_container "$runtime"; STATUS=$?
+      summary_line "container" "$STATUS"
     else
       echo "==> no podman/docker available; running unit tests locally" >&2
       run_unit_local; STATUS=$?
@@ -146,4 +167,5 @@ if [ "$STATUS" -eq 77 ]; then
   echo "==> tests skipped"
   exit 0
 fi
+printf '==> tests: %s\n' "$(status_word "$STATUS")"
 exit "$STATUS"

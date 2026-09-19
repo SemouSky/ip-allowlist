@@ -61,13 +61,36 @@ setup() {
   rm -f "$f"
 }
 
-@test "effective hash changes with rule parameters" {
+@test "effective hash covers entries, rule parameters and target switches" {
   local d; d="$(mktmp)"
-  mkdir -p "$d/current"
+  mkdir -p "$d/current" "$d/rules"
   printf '1.2.3.0/24\n' >"$d/current/a.ips"
-  local h1 h2
-  h1=$(source_effective_hash "$d" a 443 tcp true true)
-  h2=$(source_effective_hash "$d" a 8443 tcp true true)
+  cat >"$d/rules/a.conf" <<'EOF'
+allow_ports=443
+allow_protocol=tcp
+enable_ipv4=true
+enable_ipv6=true
+firewall=true
+fail2ban=true
+EOF
+  local h1 h2 h3 h4
+  h1="$(source_effective_hash "$d" a)"
+
+  sed -i 's/^allow_ports=443/allow_ports=8443/' "$d/rules/a.conf"
+  h2="$(source_effective_hash "$d" a)"
   [ "$h1" != "$h2" ]
+
+  sed -i 's/^firewall=true/firewall=false/' "$d/rules/a.conf"
+  h3="$(source_effective_hash "$d" a)"
+  [ "$h2" != "$h3" ]
+
+  sed -i 's/^fail2ban=true/fail2ban=false/' "$d/rules/a.conf"
+  h4="$(source_effective_hash "$d" a)"
+  [ "$h3" != "$h4" ]
+
+  # entries participate too
+  printf '1.2.3.0/24\n5.6.7.8/32\n' >"$d/current/a.ips"
+  [ "$h4" != "$(source_effective_hash "$d" a)" ]
+
   rm -rf "$d"
 }

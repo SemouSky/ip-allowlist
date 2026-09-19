@@ -20,6 +20,7 @@ SCRIPTS=(
   "$ROOT/tests/lint.sh"
   "$ROOT/tests/unit.sh"
   "$ROOT/tests/bats/run.sh"
+  "$ROOT/tests/doc-keys.sh"
   "$ROOT/tests/bats/helper.bash"
   "$ROOT/tests/docker/scenarios/run.sh"
   "$ROOT/tests/docker/scenarios/ufw.sh"

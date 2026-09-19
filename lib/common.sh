@@ -359,6 +359,23 @@ lock_acquire() {
   printf '%s' "$$" >"$lock_file" 2>/dev/null || true
 }
 
+# Try to acquire the lock without blocking. Returns non-zero when busy.
+# Usage: lock_try <lock_file>
+lock_try() {
+  local lock_file="$1"
+  local lock_dir
+  lock_dir=$(dirname -- "$lock_file")
+  mkdir -p -- "$lock_dir"
+  exec {LOCK_FD}>"$lock_file" || return 1
+  if ! flock -n "$LOCK_FD"; then
+    eval "exec ${LOCK_FD}>&-" 2>/dev/null || true
+    LOCK_FD=""
+    return 1
+  fi
+  printf '%s' "$$" >"$lock_file" 2>/dev/null || true
+  return 0
+}
+
 # Release the lock if held.
 lock_release() {
   if [[ -n "$LOCK_FD" ]]; then

@@ -45,6 +45,7 @@ ASSUME_YES=0
 LOG_LEVEL_CLI=0
 ALLOW_EMPTY=0
 OFFLINE=0
+AUTO_UPDATE_FAILED=0
 UPGRADE_VERSION=""
 FROM_TARBALL=""
 FROM_DIR=""
@@ -99,10 +100,12 @@ parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       sync|run|check|apply-offline|sources|status|cleanup|version|upgrade|install|uninstall|help)
-        case "$1" in
-          run) COMMAND="sync" ;;
-          *) COMMAND="$1" ;;
-        esac
+        if [[ "$COMMAND" != "help" ]]; then
+          case "$1" in
+            run) COMMAND="sync" ;;
+            *) COMMAND="$1" ;;
+          esac
+        fi
         ;;
       --source)
         shift
@@ -534,6 +537,47 @@ backend_snapshot_files() {
   esac
 }
 
+# Verify removed sources are gone.
+# Usage: backend_verify_orphans <state_dir> <name> ...
+backend_verify_orphans() {
+  local state_dir="$1"; shift
+  case "$BACKEND" in
+    nft) nft_verify_orphans "$@" ;;
+    ufw) ufw_verify_orphans "$@" ;;
+    firewalld) firewalld_verify_orphans "$state_dir" "$@" ;;
+    *) return 0 ;;
+  esac
+}
+
+# Verify a previous backend's objects are gone (direct CLI checks so the old
+# backend module does not need to be loaded).
+# Usage: backend_verify_previous_cleaned <backend> <zone>
+backend_verify_previous_cleaned() {
+  local backend="$1" zone="$2"
+  case "$backend" in
+    nft)
+      have nft || return 0
+      nft list table inet ip_allowlist >/dev/null 2>&1 && return 1
+      nft list table inet ip-allowlist >/dev/null 2>&1 && return 1
+      return 0
+      ;;
+    ufw)
+      have ufw || return 0
+      ufw show added 2>/dev/null | grep -Fq 'ip-allowlist:' && return 1
+      return 0
+      ;;
+    firewalld)
+      have firewall-cmd || return 0
+      firewall-cmd --permanent --get-ipsets 2>/dev/null | tr ' ' '\n' | grep -q '^ia-' && return 1
+      if [[ -n "$zone" ]] && firewall-cmd --permanent --zone="$zone" --list-rich-rules 2>/dev/null | grep -Fq 'ipset="ia-'; then
+        return 1
+      fi
+      return 0
+      ;;
+  esac
+  return 0
+}
+
 # Restore the backend's configuration files (last-resort rollback).
 backend_restore_files() {
   case "$BACKEND" in
@@ -785,6 +829,8 @@ update_check_maybe() {
     exec "$bin" sync
   fi
   log_warn "auto_update: upgrade to $latest failed; continuing with the current version"
+  AUTO_UPDATE_FAILED=1
+  return 0
 }
 
 cmd_sync() {
@@ -833,7 +879,15 @@ cmd_sync() {
   prev_firewalld_zone=$(state_get_key "firewall.firewalld-zone")
   prev_dropin=$(state_get_key "fail2ban.ignoreip-file")
 
-  lock_acquire "$LOCK_FILE"
+  if [[ "${IP_ALLOWLIST_TIMER:-0}" == "1" ]]; then
+    # Timer runs must never wait: skip when another run holds the lock.
+    if ! lock_try "$LOCK_FILE"; then
+      log_info "another run holds the lock; skipping this timer run"
+      return 0
+    fi
+  else
+    lock_acquire "$LOCK_FILE"
+  fi
 
   if state_in_progress; then
     local inprog_started
@@ -1013,6 +1067,20 @@ cmd_sync() {
 
   FIREWALL_CHANGED_SOURCES=("${changed_names[@]:-}")
 
+  if (( DRY_RUN == 1 )); then
+    if (( needs_apply == 1 )); then
+      log_info "dry-run: would apply ${#changed_names[@]} changed and ${#FIREWALL_REMOVED_SOURCES[@]} removed source(s)"
+    else
+      log_info "dry-run: no firewall changes"
+    fi
+    if (( fail2ban_ready == 1 )); then
+      log_info "dry-run: would reconcile the fail2ban drop-in $FAIL2BAN_DROPIN"
+    fi
+    state_clear_in_progress
+    lock_release
+    return 0
+  fi
+
   if (( firewall_ready == 0 )); then
     log_info "firewall target skipped; firewall unchanged"
   elif (( needs_apply == 1 )); then
@@ -1062,10 +1130,29 @@ cmd_sync() {
       source_selected "$name" || continue
       [[ -f "$STATE_DIR/current/${name}.ips" ]] && state_known_add "$name"
     done
+    if ! backend_verify_orphans "$STATE_DIR" "${FIREWALL_REMOVED_SOURCES[@]:-}"; then
+      log_error "removed sources still present after apply"
+      local rn
+      for rn in "${FIREWALL_REMOVED_SOURCES[@]:-}"; do
+        [[ -n "$rn" ]] && state_known_add "$rn"
+      done
+      state_clear_in_progress
+      lock_release
+      exit 2
+    fi
+
     atomic_install "$fp_tmp" "$STATE_DIR/desired.hash" "0600"
     state_set_backend "$BACKEND"
     if (( backend_changed == 1 )); then
       cleanup_previous_backend "$prev_backend" "$prev_firewalld_zone"
+      if ! backend_verify_previous_cleaned "$prev_backend" "$prev_firewalld_zone"; then
+        log_error "previous backend $prev_backend still has ip-allowlist objects"
+        state_set_key "firewall.residual" "$prev_backend"
+        state_clear_in_progress
+        lock_release
+        exit 2
+      fi
+      state_set_key "firewall.residual" ""
     fi
   else
     log_info "no source changes; firewall unchanged"
@@ -1087,8 +1174,13 @@ cmd_sync() {
 
   state_clear_in_progress
   lock_release
+  state_set_key "last-run-id" "$RUN_ID"
   if (( failures > 0 )); then
     log_error "sync completed with $failures source failure(s)"
+    return 2
+  fi
+  if (( AUTO_UPDATE_FAILED == 1 )); then
+    log_error "auto_update failed; the current version is unchanged"
     return 2
   fi
   log_info "sync complete"
@@ -1268,10 +1360,11 @@ cmd_sources() {
 
 cmd_status() {
   state_init "$STATE_DIR"
+  validate_source_filter
 
   local backend_state
   backend_state=$(backend_status)
-  local desired_hash f2b_hash f2b_status latest verify_state
+  local desired_hash f2b_hash f2b_status latest verify_state last_run_id residual
   desired_hash=$(cat -- "$STATE_DIR/desired.hash" 2>/dev/null || true)
   [[ -n "$desired_hash" ]] || desired_hash="none"
   f2b_hash=$(state_fail2ban_hash)
@@ -1285,6 +1378,9 @@ cmd_status() {
   fi
   latest=$(state_get_key "latest-known-version")
   [[ -n "$latest" ]] || latest="unknown"
+  last_run_id=$(state_get_key "last-run-id")
+  [[ -n "$last_run_id" ]] || last_run_id="none"
+  residual=$(state_get_key "firewall.residual")
   verify_state="unknown"
   if [[ "$FIREWALL_ENABLED" != "true" ]]; then
     verify_state="disabled"
@@ -1337,6 +1433,10 @@ cmd_status() {
       err "WARNING: firewall table inactive"
       (( issues < 1 )) && issues=1
     fi
+    if [[ -n "$residual" ]]; then
+      err "WARNING: $residual objects remain from a previous backend"
+      (( issues < 1 )) && issues=1
+    fi
     if (( issues == 0 )); then
       out "OK: $enabled_count sources, backend $backend_state"
     fi
@@ -1344,13 +1444,14 @@ cmd_status() {
   fi
 
   if (( JSON_OUT == 1 )); then
-    printf '{"version":"%s","firewall_enabled":%s,"backend":"%s","backend_status":"%s","verify":"%s","desired_hash":"%s","fail2ban":"%s","fail2ban_hash":"%s","latest_version":"%s","state_dir":"%s","in_progress":%s,"sources":[' \
-      "$IP_ALLOWLIST_VERSION" "$FIREWALL_ENABLED" "$BACKEND" "$(json_escape "$backend_state")" \
-      "$verify_state" "$desired_hash" "$f2b_status" "$f2b_hash" "$(json_escape "$latest")" \
+    printf '{"version":"%s","run_id":"%s","firewall_enabled":%s,"backend":"%s","backend_status":"%s","verify":"%s","desired_hash":"%s","residual":"%s","fail2ban":"%s","fail2ban_hash":"%s","latest_version":"%s","state_dir":"%s","in_progress":%s,"sources":[' \
+      "$IP_ALLOWLIST_VERSION" "$last_run_id" "$FIREWALL_ENABLED" "$BACKEND" "$(json_escape "$backend_state")" \
+      "$verify_state" "$desired_hash" "$(json_escape "$residual")" "$f2b_status" "$f2b_hash" "$(json_escape "$latest")" \
       "$(json_escape "$STATE_DIR")" \
       "$(state_in_progress && echo true || echo false)"
     local first=1 name
     for name in "${SOURCE_NAMES[@]}"; do
+      source_selected "$name" || continue
       local ref
       ref=$(source_ref "$name")
       local -n src="$ref"
@@ -1360,11 +1461,19 @@ cmd_status() {
         entries=$(count_lines "$current")
         read -r v4 v6 < <(count_v4_v6 "$current")
       fi
+      local sstatus="ok"
+      if [[ "${src[enabled]}" != "true" ]]; then sstatus="disabled"
+      elif state_is_stale "$name"; then sstatus="stale"; fi
+      local desired=""
+      if [[ "${src[enabled]}" == "true" && -f "$current" ]]; then
+        desired=$(source_effective_hash "$STATE_DIR" "$name" "${src[allow_ports]}" \
+          "${src[allow_protocol]}" "${src[enable_ipv4]}" "${src[enable_ipv6]}")
+      fi
       (( first == 1 )) || printf ','
       first=0
-      printf '{"name":"%s","enabled":%s,"entries":%s,"v4":%s,"v6":%s,"hash":"%s","last_run":"%s"}' \
-        "$(json_escape "$name")" "${src[enabled]}" "$entries" "$v4" "$v6" \
-        "$(state_get_applied_hash "$name")" "$(state_last_run "$name")"
+      printf '{"name":"%s","enabled":%s,"status":"%s","entries":%s,"v4":%s,"v6":%s,"applied":"%s","desired":"%s","last_success":"%s"}' \
+        "$(json_escape "$name")" "${src[enabled]}" "$sstatus" "$entries" "$v4" "$v6" \
+        "$(state_get_applied_hash "$name")" "$desired" "$(state_last_run "$name")"
     done
     printf ']}\n'
     return 0
@@ -1377,6 +1486,8 @@ cmd_status() {
   printf 'desired:    %s\n' "${desired_hash:0:16}"
   printf 'fail2ban:   %s (hash %s)\n' "$f2b_status" "${f2b_hash:0:16}"
   printf 'latest:     %s\n' "$latest"
+  printf 'run id:     %s\n' "$last_run_id"
+  [[ -n "$residual" ]] && printf 'residual:   %s objects left by a previous backend\n' "$residual"
   printf 'state dir:  %s\n' "$STATE_DIR"
   if state_in_progress; then
     printf 'status:     IN PROGRESS (interrupted run detected)\n'
@@ -1386,6 +1497,7 @@ cmd_status() {
   printf '\n%-20s %-8s %-8s %-6s %-6s %-16s %s\n' "SOURCE" "ENABLED" "ENTRIES" "V4" "V6" "LAST RUN" "HASH"
   local name
   for name in "${SOURCE_NAMES[@]}"; do
+    source_selected "$name" || continue
     local ref
     ref=$(source_ref "$name")
     local -n src="$ref"
@@ -1413,6 +1525,16 @@ cmd_status() {
 cmd_upgrade() {
   LOG_COMPONENT=upgrade
   # Offline / pinned installs are delegated straight to install.sh.
+  if [[ -n "$UPGRADE_VERSION" ]]; then
+    local want="${UPGRADE_VERSION#v}"
+    if [[ "$want" != "$IP_ALLOWLIST_VERSION" && "${FORCE:-0}" -eq 0 ]]; then
+      local newest
+      newest=$(printf '%s\n%s\n' "$IP_ALLOWLIST_VERSION" "$want" | sort -V | tail -n1)
+      if [[ "$newest" != "$want" ]]; then
+        die "requested version $want is not newer than $IP_ALLOWLIST_VERSION; use --force to downgrade or reinstall"
+      fi
+    fi
+  fi
   if [[ -n "$FROM_DIR" || -n "$FROM_TARBALL" || -n "$UPGRADE_VERSION" ]]; then
     local -a iargs=(--yes)
     [[ -n "$FROM_DIR" ]] && iargs+=(--from-dir "$FROM_DIR")

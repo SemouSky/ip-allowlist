@@ -7,6 +7,7 @@ ConditionPathExists=/etc/ip-allowlist/config.conf
 
 [Service]
 Type=oneshot
+Environment=IP_ALLOWLIST_TIMER=1
 ExecStart=/usr/local/sbin/ip-allowlist sync
 User=root
 Group=root

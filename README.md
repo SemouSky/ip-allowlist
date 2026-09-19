@@ -81,6 +81,15 @@ ip-allowlist uninstall       # Uninstall (--purge to remove data)
   tables, so a separate default-deny chain can still drop allow-listed traffic.
 - Docker can bypass ufw/firewalld; see the backend documentation.
 
+## Operations tips
+
+- Failure notification is not built in; use systemd `OnFailure=`:
+  `systemctl edit ip-allowlist.service` and add `[Unit]\nOnFailure=notify@%n.service`.
+- SELinux/AppArmor hosts must allow writes to `/etc/fail2ban`, `/etc/firewalld` and
+  `/etc/ufw` for the fail2ban drop-in and the firewall backends.
+- Without systemd the installer falls back to `/etc/cron.d/ip-allowlist`
+  (`timer_interval` rounded to minutes, plus `@reboot apply-offline` for nft).
+
 ## Requirements
 
 - Linux with bash 4.4+

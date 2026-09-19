@@ -232,6 +232,28 @@ ufw_verify() {
     log_error "ufw verify: applied rules do not match the desired set"
     return 1
   fi
+  # No extra managed rules (catches failed removals).
+  local want have
+  want=$(count_lines "$desired")
+  have=$(grep -c "${UFW_COMMENT_PREFIX}:" "$existing" 2>/dev/null || true)
+  if (( have > want )); then
+    log_error "ufw verify: $have managed rules present, expected $want"
+    return 1
+  fi
+  return 0
+}
+
+# Return non-zero when a removed source still has managed rules.
+# Usage: ufw_verify_orphans <name> ...
+ufw_verify_orphans() {
+  local n
+  for n in "$@"; do
+    [[ -n "$n" ]] || continue
+    if ufw show added 2>/dev/null | grep -Fq "${UFW_COMMENT_PREFIX}:${n}'"; then
+      log_error "ufw verify: removed source $n still has rules"
+      return 1
+    fi
+  done
   return 0
 }
 

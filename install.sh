@@ -92,6 +92,7 @@ cleanup() {
   [[ -n "$STAGING" ]] && rm -rf -- "$STAGING"
   [[ -n "$WORK_DIR" ]] && rm -rf -- "$WORK_DIR"
   [[ -n "$ARCHIVE" ]] && rm -f -- "$ARCHIVE"
+  release_lock
   return 0
 }
 trap cleanup EXIT
@@ -99,6 +100,9 @@ trap cleanup EXIT
 check_prereqs() {
   local missing=()
   command -v bash >/dev/null 2>&1 || missing+=("bash")
+  if (( BASH_VERSINFO[0] < 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 4) )); then
+    die "bash 4.4 or newer is required (found ${BASH_VERSION})"
+  fi
   command -v tar >/dev/null 2>&1 || missing+=("tar")
   if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
     missing+=("curl or wget")
@@ -276,11 +280,45 @@ install_config() {
   fi
 }
 
+# Fall back to cron when systemd is unavailable.
+install_cron() {
+  local cron_dir="/etc/cron.d"
+  [[ -d "$cron_dir" ]] || { warn "no /etc/cron.d; cannot schedule updates"; return 0; }
+  local raw minutes backend
+  raw=$(sed -n 's/^[[:space:]]*timer_interval[[:space:]]*=[[:space:]]*//p' "$CONFIG_DIR/config.conf" 2>/dev/null | tail -n1)
+  raw=$(printf '%s' "$raw" | tr -d '\r' | tr -d '"'"'"'')
+  minutes=15
+  case "$raw" in
+    *w) minutes=$(( ${raw%w} * 10080 )) ;;
+    *d) minutes=$(( ${raw%d} * 1440 )) ;;
+    *h) minutes=$(( ${raw%h} * 60 )) ;;
+    *m) minutes=${raw%m} ;;
+    '') ;;
+    *) minutes=$(( raw / 60 )) ;;
+  esac
+  (( minutes >= 1 )) || minutes=1
+  backend=$(sed -n 's/^[[:space:]]*firewall_backend[[:space:]]*=[[:space:]]*//p' "$CONFIG_DIR/config.conf" 2>/dev/null | tail -n1)
+  backend=$(printf '%s' "$backend" | tr -d '\r' | tr -d '"'"'"'')
+  {
+    printf 'SHELL=/bin/sh\n'
+    printf 'PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin\n'
+    printf '*/%s * * * * root IP_ALLOWLIST_TIMER=1 /usr/local/sbin/ip-allowlist sync\n' "$minutes"
+    if [[ "$backend" == "nft" ]]; then
+      printf '@reboot root /usr/local/sbin/ip-allowlist apply-offline\n'
+    fi
+  } >"$cron_dir/ip-allowlist"
+  chmod 0644 "$cron_dir/ip-allowlist"
+  log "installed cron schedule (/etc/cron.d/ip-allowlist, every ${minutes}m)"
+}
+
 install_systemd() {
   if ! command -v systemctl >/dev/null 2>&1; then
-    warn "systemctl not found; skipping systemd unit installation"
+    warn "systemctl not found; using cron for scheduling"
+    rm -f -- "$SYSTEMD_DIR/ip-allowlist.service" "$SYSTEMD_DIR/ip-allowlist.timer" "$SYSTEMD_DIR/ip-allowlist-boot.service"
+    install_cron
     return 0
   fi
+  rm -f -- /etc/cron.d/ip-allowlist
   if [[ ! -f "$SRC_DIR/systemd/ip-allowlist.service" ]]; then
     warn "systemd unit files not found; skipping"
     return 0
@@ -319,6 +357,16 @@ install_systemd() {
 
 install_logrotate() {
   [[ -d "$LOGROTATE_DIR" ]] || return 0
+  local target
+  target=$(sed -n 's/^[[:space:]]*log_target[[:space:]]*=[[:space:]]*//p' "$CONFIG_DIR/config.conf" 2>/dev/null | tail -n1)
+  target=$(printf '%s' "$target" | tr -d '\r' | tr -d '"'"'"'')
+  case ",$target," in
+    *,file,*) ;;
+    *)
+      rm -f -- "$LOGROTATE_DIR/ip-allowlist"
+      return 0
+      ;;
+  esac
   if [[ -f "$SRC_DIR/config/logrotate.d/ip-allowlist" ]]; then
     install -m 0644 "$SRC_DIR/config/logrotate.d/ip-allowlist" "$LOGROTATE_DIR/ip-allowlist"
   else
@@ -353,9 +401,27 @@ install_log_file() {
   log "prepared log file $log"
 }
 
+LOCK_FILE="${LOCK_FILE:-/run/ip-allowlist.lock}"
+LOCK_FD=""
+acquire_lock() {
+  install -d -m 0700 "$(dirname -- "$LOCK_FILE")" 2>/dev/null || true
+  exec {LOCK_FD}>"$LOCK_FILE" || die "cannot open lock file: $LOCK_FILE"
+  if ! flock -w 30 "$LOCK_FD"; then
+    die "another ip-allowlist instance is running (lock: $LOCK_FILE)"
+  fi
+}
+release_lock() {
+  if [[ -n "$LOCK_FD" ]]; then
+    flock -u "$LOCK_FD" 2>/dev/null || true
+    eval "exec ${LOCK_FD}>&-" 2>/dev/null || true
+    LOCK_FD=""
+  fi
+}
+
 main() {
   require_root
   check_prereqs
+  acquire_lock
   resolve_sources
   syntax_check
 

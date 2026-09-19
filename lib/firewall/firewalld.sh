@@ -312,6 +312,42 @@ firewalld_verify() {
 # Snapshot / cleanup / status
 # ---------------------------------------------------------------------------
 
+# Return non-zero when the number of ia- ipsets exceeds the desired count
+# (removed sources leave no name behind, so a count check is used).
+# Usage: firewalld_verify_orphans <state_dir> <removed names...>
+firewalld_verify_orphans() {
+  local state_dir="$1"; shift
+  local -a sets=()
+  read -ra sets < <(firewall-cmd --permanent --get-ipsets 2>/dev/null)
+  local have=0 s
+  for s in "${sets[@]:-}"; do
+    [[ "$s" == "${FIREWALLD_IPSET_PREFIX}-"* ]] && have=$(( have + 1 ))
+  done
+  local want=0 f base fam entries
+  for f in "$state_dir"/current/*.ips; do
+    [[ -e "$f" ]] || continue
+    base=$(basename -- "$f" .ips)
+    for fam in v4 v6; do
+      entries=$(tmpfile "fw-orph-${base}-${fam}")
+      if [[ "$fam" == "v4" ]]; then
+        grep -v ':' "$f" >"$entries" 2>/dev/null || true
+      else
+        grep ':' "$f" >"$entries" 2>/dev/null || true
+      fi
+      [[ -s "$entries" ]] || continue
+      local enabled
+      enabled=$(rule_spec_get "$state_dir" "$base" "enable_ipv${fam#v}" true)
+      [[ "$enabled" == "true" ]] || continue
+      want=$(( want + 1 ))
+    done
+  done
+  if (( have > want )); then
+    log_error "firewalld verify: $have ipsets present, expected $want (failed removal?)"
+    return 1
+  fi
+  return 0
+}
+
 # Snapshot the firewalld configuration directory (file-level rollback).
 firewalld_snapshot_files() {
   state_snapshot_paths firewalld /etc/firewalld

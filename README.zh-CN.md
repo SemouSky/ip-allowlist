@@ -77,6 +77,13 @@ ip-allowlist uninstall       # 卸载（--purge 同时清除数据）
 - 在 nftables 中，`accept` 判定在不同表的 base chain 之间**不是终结**，因此独立的 default-deny 链仍可能丢弃已被放行的流量。
 - Docker 可能绕过 ufw/firewalld，详见各后端文档。
 
+## 运维提示
+
+- 不内置失败通知；可用 systemd `OnFailure=`：
+  `systemctl edit ip-allowlist.service`，加入 `[Unit]\nOnFailure=notify@%n.service`。
+- SELinux/AppArmor 环境需允许写入 `/etc/fail2ban`、`/etc/firewalld`、`/etc/ufw`，以便写入 fail2ban drop-in 与各防火墙后端。
+- 无 systemd 时安装器回退到 `/etc/cron.d/ip-allowlist`（`timer_interval` 换算为分钟，nft 后端另加 `@reboot apply-offline`）。
+
 ## 系统要求
 
 - Linux，bash 4.4+

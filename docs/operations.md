@@ -43,6 +43,13 @@ systemctl status ip-allowlist.service
 journalctl -u ip-allowlist.service -f
 ```
 
+Without systemd the installer writes `/etc/cron.d/ip-allowlist` instead of the
+units (`timer_interval` rounded to minutes, plus a `@reboot apply-offline` entry
+for the nft backend). Timer runs acquire the lock non-blocking and skip when
+another run is active; manual runs wait up to `lock_wait` seconds. If a previous
+backend could not be cleaned (its tool is gone), `status` reports
+`residual: <backend>` and `status --check` returns WARNING.
+
 The boot service only runs for the `nft` backend when
 `/etc/ip-allowlist/update-on-boot` exists (created by the installer). It runs
 `apply-offline` after `nftables.service` to rebuild the table from cached state.

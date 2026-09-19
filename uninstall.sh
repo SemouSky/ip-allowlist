@@ -55,15 +55,50 @@ stop_services() {
 }
 
 remove_firewall_state() {
-  local nft_bin t
-  nft_bin=$(command -v nft 2>/dev/null || true)
-  [[ -n "$nft_bin" ]] || return 0
-  for t in ip_allowlist ip-allowlist; do
-    if nft list table inet "$t" >/dev/null 2>&1; then
-      nft delete table inet "$t" 2>/dev/null || true
-      log "removed nftables table inet $t"
-    fi
-  done
+  # Prefer the installed tool: it knows the configured backend and paths.
+  if [[ -x "$SYMLINK" && -f "$CONFIG_DIR/config.conf" ]]; then
+    "$SYMLINK" cleanup >/dev/null 2>&1 || true
+  fi
+
+  # nft tables (current and pre-rename names).
+  local t
+  if command -v nft >/dev/null 2>&1; then
+    for t in ip_allowlist ip-allowlist; do
+      if nft list table inet "$t" >/dev/null 2>&1; then
+        nft delete table inet "$t" 2>/dev/null || true
+        log "removed nftables table inet $t"
+      fi
+    done
+  fi
+
+  # ufw rules tagged with our comment.
+  if command -v ufw >/dev/null 2>&1; then
+    local line spec
+    local -a argv=()
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      [[ "$line" == *"ip-allowlist:"* ]] || continue
+      spec="${line#ufw }"
+      read -ra argv <<<"$spec"
+      ufw delete "${argv[@]}" >/dev/null 2>&1 || true
+    done < <(ufw show added 2>/dev/null)
+  fi
+
+  # firewalld ipsets and rich rules created by ip-allowlist.
+  if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    local z r s
+    for z in $(firewall-cmd --get-zones 2>/dev/null); do
+      while IFS= read -r r || [[ -n "$r" ]]; do
+        [[ "$r" == *'ipset="ia-'* ]] || continue
+        firewall-cmd --permanent --zone="$z" --remove-rich-rule="$r" >/dev/null 2>&1 || true
+      done < <(firewall-cmd --permanent --zone="$z" --list-rich-rules 2>/dev/null)
+    done
+    while IFS= read -r s || [[ -n "$s" ]]; do
+      [[ "$s" == ia-* ]] || continue
+      firewall-cmd --permanent --delete-ipset="$s" >/dev/null 2>&1 || true
+    done < <(firewall-cmd --permanent --get-ipsets 2>/dev/null | tr ' ' '\n')
+    firewall-cmd --reload >/dev/null 2>&1 || true
+    log "removed firewalld ip-allowlist ipsets and rich rules"
+  fi
 }
 
 remove_fail2ban_dropin() {
@@ -78,6 +113,7 @@ remove_fail2ban_dropin() {
 }
 
 remove_files() {
+  rm -f -- /etc/cron.d/ip-allowlist
   rm -f -- "$SYMLINK"
   rm -rf -- "$INSTALL_LIB"
   rm -f -- "$LOGROTATE_DIR/ip-allowlist"
@@ -90,8 +126,27 @@ purge_data() {
   log "purged config, state and logs"
 }
 
+LOCK_FILE="${LOCK_FILE:-/run/ip-allowlist.lock}"
+LOCK_FD=""
+acquire_lock() {
+  install -d -m 0700 "$(dirname -- "$LOCK_FILE")" 2>/dev/null || true
+  exec {LOCK_FD}>"$LOCK_FILE" || die "cannot open lock file: $LOCK_FILE"
+  if ! flock -w 30 "$LOCK_FD"; then
+    die "another ip-allowlist instance is running (lock: $LOCK_FILE)"
+  fi
+}
+release_lock() {
+  if [[ -n "$LOCK_FD" ]]; then
+    flock -u "$LOCK_FD" 2>/dev/null || true
+    eval "exec ${LOCK_FD}>&-" 2>/dev/null || true
+    LOCK_FD=""
+  fi
+}
+
 main() {
   require_root
+  acquire_lock
+  trap 'release_lock' EXIT
 
   if (( ASSUME_YES == 0 )); then
     local extra=""

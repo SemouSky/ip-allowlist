@@ -37,6 +37,8 @@ systemctl status ip-allowlist.service
 journalctl -u ip-allowlist.service -f
 ```
 
+无 systemd 时，安装器改为写入 `/etc/cron.d/ip-allowlist`（`timer_interval` 换算为分钟，nft 后端另加 `@reboot apply-offline`）。定时器运行以非阻塞方式取锁，若已有运行则跳过；手动运行最多等待 `lock_wait` 秒。若旧后端无法清理（工具已不存在），`status` 会显示 `residual: <backend>`，且 `status --check` 返回 WARNING。
+
 启动 service 仅在 `nft` 后端且 `/etc/ip-allowlist/update-on-boot` 存在时运行（由安装程序创建）。它执行 `apply-offline`，在 `nftables.service` 之后用缓存状态重建表。
 
 ## 监控

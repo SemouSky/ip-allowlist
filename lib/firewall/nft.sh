@@ -393,6 +393,25 @@ nft_verify() {
   return 0
 }
 
+# Return non-zero when a removed source still has objects.
+# Usage: nft_verify_orphans <name> ...
+nft_verify_orphans() {
+  local n sname
+  for n in "$@"; do
+    [[ -n "$n" ]] || continue
+    sname=$(nft_sanitize_name "$n")
+    if nft list chain "$NFT_FAMILY" "$NFT_TABLE" "al_${sname}" >/dev/null 2>&1; then
+      log_error "nft verify: removed source $n still has chain al_${sname}"
+      return 1
+    fi
+    if [[ -n "$(nft_jump_handle "al_${sname}")" ]]; then
+      log_error "nft verify: removed source $n still has a jump rule"
+      return 1
+    fi
+  done
+  return 0
+}
+
 nft_snapshot_files() { return 0; }
 nft_restore_files() { return 1; }
 

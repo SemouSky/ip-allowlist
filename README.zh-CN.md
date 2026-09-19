@@ -66,7 +66,7 @@ ip-allowlist version         # 显示版本
 ip-allowlist upgrade         # 检查/安装更新
 ip-allowlist upgrade --version 0.3.0 --from-dir DIR  # 离线/指定版本安装
 ip-allowlist install         # 全系统安装
-ip-allowlist uninstall       # 卸载（--purge 同时清除数据）
+ip-allowlist uninstall       # 卸载（--purge 同时清除配置与状态）
 ```
 
 `allow_ports` 默认 `443`、`allow_protocol` 默认 `tcp+udp`；设为 `allow_ports=all` 可放行来源地址的所有端口。

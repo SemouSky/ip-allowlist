@@ -21,7 +21,7 @@ ip-allowlist 是一个 Linux Shell 脚本，用于从 Cloudflare 及其他 IP �
   - `firewall/firewalld.sh` - firewalld 后端（hash:net ipset + 富规则）
 - **配置**：`/etc/ip-allowlist/config.conf` + `sources.d/*.conf`
 - **systemd**：定时器（15 分钟）+ service + 可选的启动 service
-- **安装**：`install.sh` / `uninstall.sh`，采用原子暂存
+- **安装**：`install.sh`，采用原子暂存；卸载已内置到 CLI（`ip-allowlist uninstall`）
 
 ## 关键设计原则
 

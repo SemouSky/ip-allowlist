@@ -21,7 +21,7 @@ ip-allowlist is a Linux shell script for managing firewall allow-lists from Clou
   - `firewall/firewalld.sh` - firewalld backend (hash:net ipsets + rich rules)
 - **Config**: `/etc/ip-allowlist/config.conf` + `sources.d/*.conf`
 - **Systemd**: Timer (15min) + service + optional boot service
-- **Install**: `install.sh` / `uninstall.sh` with atomic staging
+- **Install**: `install.sh` with atomic staging; uninstall is built into the CLI (`ip-allowlist uninstall`)
 
 ## Key Design Principles
 

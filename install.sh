@@ -202,8 +202,7 @@ syntax_check() {
     "$SRC_DIR/lib/firewall/nft.sh" \
     "$SRC_DIR/lib/firewall/ufw.sh" \
     "$SRC_DIR/lib/firewall/firewalld.sh" \
-    "$SRC_DIR/install.sh" \
-    "$SRC_DIR/uninstall.sh"; do
+    "$SRC_DIR/install.sh"; do
     [[ -f "$f" ]] || die "missing expected file: $f"
     bash -n "$f" || die "syntax error in $f"
   done
@@ -229,8 +228,7 @@ stage_files() {
     printf '0.0.0\n' >"$staging/version.txt"
   fi
 
-  install -m 0755 "$SRC_DIR/install.sh"   "$staging/install.sh"
-  install -m 0755 "$SRC_DIR/uninstall.sh" "$staging/uninstall.sh"
+  install -m 0755 "$SRC_DIR/install.sh" "$staging/install.sh"
 }
 
 atomic_swap_dir() {

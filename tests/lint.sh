@@ -15,7 +15,6 @@ SCRIPTS=(
   "$ROOT/lib/firewall/ufw.sh"
   "$ROOT/lib/firewall/firewalld.sh"
   "$ROOT/install.sh"
-  "$ROOT/uninstall.sh"
   "$ROOT/tests/run.sh"
   "$ROOT/tests/lint.sh"
   "$ROOT/tests/unit.sh"

@@ -687,6 +687,18 @@ fi
 "$CLI" --config "$CR/config.conf" cleanup >/dev/null 2>&1
 
 # ---------------------------------------------------------------------------
+# 10h. CLI help behaviour
+# ---------------------------------------------------------------------------
+out_help="$("$CLI" 2>&1)"
+assert_contains "no command prints help" "$out_help" "Usage:"
+assert_not_contains "no command does not sync" "$out_help" "sync complete"
+h_install="$("$CLI" help install 2>&1)"
+assert_contains "help install documents options" "$h_install" "--prefix"
+h_uninstall="$("$CLI" help uninstall 2>&1)"
+assert_contains "help uninstall documents --purge" "$h_uninstall" "--purge"
+assert_not_contains "help uninstall is real help" "$h_uninstall" "Delegates"
+
+# ---------------------------------------------------------------------------
 # 11. install/uninstall smoke test
 # ---------------------------------------------------------------------------
 if [[ -x "$ROOT/install.sh" ]]; then
@@ -733,10 +745,10 @@ if [[ -x "$ROOT/install.sh" ]]; then
   still="$(/usr/local/sbin/ip-allowlist version 2>&1 || true)"
   assert_contains "failed install leaves the previous install intact" "$still" "ip-allowlist"
 
-  if "$ROOT/uninstall.sh" --yes --purge >"$WS/uninstall.log" 2>&1; then
-    pass "uninstall.sh exits 0"
+  if "$CLI" uninstall --yes --purge >"$WS/uninstall.log" 2>&1; then
+    pass "uninstall exits 0"
   else
-    fail "uninstall.sh exits 0 (see $WS/uninstall.log)"
+    fail "uninstall exits 0 (see $WS/uninstall.log)"
   fi
   if [[ ! -e /usr/local/sbin/ip-allowlist && ! -e /etc/ip-allowlist ]]; then
     pass "uninstall purged files"

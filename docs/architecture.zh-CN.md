@@ -25,7 +25,7 @@ sources.d/
   cloudflare.conf.example  来源模板
 systemd/                定时器 + service + 启动 service
 install.sh              原子暂存安装/升级
-uninstall.sh            卸载（--purge 清除数据）
+（卸载已内置到 ip-allowlist 命令：uninstall）
 tests/                  单元测试 + 容器集成测试
 ```
 

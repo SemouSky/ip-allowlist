@@ -58,10 +58,12 @@ usage() {
   cat <<'EOF'
 ip-allowlist - manage firewall allow-lists from Cloudflare and other sources
 
-Usage: ip-allowlist [command] [options]
+Usage: ip-allowlist <command> [options]
+
+Running without a command prints this help.
 
 Commands:
-  sync (default, alias: run)
+  sync (alias: run)
                    Fetch sources and apply allow-lists
   check            Validate config and sources, report changes without applying
   apply-offline    Apply allow-lists from cached state (no network)
@@ -181,11 +183,33 @@ ip-allowlist version [--json]
 Show the version and where the running copy was installed from.
 EOF
       ;;
-    install|uninstall)
-      cat <<EOF
-ip-allowlist $1 [options]
+    install)
+      cat <<'EOF'
+ip-allowlist install [--yes] [--prefix DIR] [--version VER]
+                     [--from-dir DIR] [--from-tarball FILE]
 
-Delegates to $1.sh. See $1.sh --help for details.
+Install or upgrade ip-allowlist system-wide. Existing config.conf and
+sources.d/*.conf are preserved; state is kept. The systemd units (or the cron
+fallback) are installed and the timer is enabled.
+
+  --yes              Do not prompt.
+  --prefix DIR       Install prefix (default: /usr/local).
+  --version VER      Install a specific release.
+  --from-dir DIR     Install from an unpacked tree (offline).
+  --from-tarball F   Install from a tarball (offline).
+EOF
+      ;;
+    uninstall)
+      cat <<'EOF'
+ip-allowlist uninstall [--purge] [--yes]
+
+Remove ip-allowlist from this host: firewall objects for every backend
+(nft table, ufw comment rules, firewalld ipsets/rich rules), the fail2ban
+drop-in, systemd units or the cron entry, the logrotate config, the installed
+program and the /usr/local/sbin symlink.
+
+  --purge   Also remove /etc/ip-allowlist, the state directory and the log file.
+  --yes     Do not prompt.
 EOF
       ;;
     *)
@@ -267,7 +291,9 @@ parse_args() {
     shift
   done
 
-  [[ -n "$COMMAND" ]] || COMMAND="sync"
+  # Running without a command prints help instead of syncing, so a mistyped
+  # invocation cannot activate a misconfigured source set.
+  [[ -n "$COMMAND" ]] || COMMAND="help"
 }
 
 # ---------------------------------------------------------------------------
@@ -1762,13 +1788,148 @@ cmd_install() {
   exec "$script" "${args[@]}"
 }
 
+# Read a single key from an installed config without loading it (the config may
+# be broken or missing during uninstall).
+uninstall_cfg_value() {
+  local file="$1" key="$2" value
+  [[ -f "$file" ]] || return 0
+  value=$(sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" "$file" | tail -n1)
+  value=$(printf '%s' "$value" | tr -d '\r')
+  value="${value%%#*}"
+  value=$(printf '%s' "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr -d '"'"'"'')
+  printf '%s' "$value"
+}
+
+# Resolve a config path relative to the config directory.
+uninstall_abs_path() {
+  local base="$1" path="$2"
+  if [[ "$path" == /* ]]; then printf '%s' "$path"; else printf '%s/%s' "${base%/}" "$path"; fi
+}
+
+# Remove ip-allowlist firewall objects from every backend (best effort).
+remove_installed_firewall_objects() {
+  local dropin="$1"
+  local t line spec
+  local -a argv=()
+
+  if have nft; then
+    for t in ip_allowlist ip-allowlist; do
+      if nft list table inet "$t" >/dev/null 2>&1; then
+        nft delete table inet "$t" 2>/dev/null || true
+        out "removed nftables table inet $t"
+      fi
+    done
+  fi
+
+  if have ufw; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      [[ "$line" == *"ip-allowlist:"* ]] || continue
+      spec="${line#ufw }"
+      read -ra argv <<<"$spec"
+      ufw delete "${argv[@]}" >/dev/null 2>&1 || true
+    done < <(ufw show added 2>/dev/null)
+    out "removed ufw ip-allowlist rules"
+  fi
+
+  if have firewall-cmd && firewall-cmd --state >/dev/null 2>&1; then
+    local z r s
+    for z in $(firewall-cmd --get-zones 2>/dev/null); do
+      while IFS= read -r r || [[ -n "$r" ]]; do
+        [[ "$r" == *'ipset="ia-'* ]] || continue
+        firewall-cmd --permanent --zone="$z" --remove-rich-rule="$r" >/dev/null 2>&1 || true
+      done < <(firewall-cmd --permanent --zone="$z" --list-rich-rules 2>/dev/null)
+    done
+    while IFS= read -r s || [[ -n "$s" ]]; do
+      [[ "$s" == ia-* ]] || continue
+      firewall-cmd --permanent --delete-ipset="$s" >/dev/null 2>&1 || true
+    done < <(firewall-cmd --permanent --get-ipsets 2>/dev/null | tr ' ' '\n')
+    firewall-cmd --reload >/dev/null 2>&1 || true
+    out "removed firewalld ip-allowlist ipsets and rich rules"
+  fi
+
+  if [[ -n "$dropin" && -f "$dropin" ]]; then
+    rm -f -- "$dropin"
+    out "removed fail2ban drop-in $dropin"
+    if have fail2ban-client; then
+      fail2ban-client reload >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+# Stop and remove the systemd units (best effort).
+remove_installed_systemd() {
+  local dir="/etc/systemd/system"
+  if have systemctl; then
+    systemctl disable --now ip-allowlist.timer 2>/dev/null || true
+    systemctl disable --now ip-allowlist-boot.service 2>/dev/null || true
+    systemctl stop ip-allowlist.service 2>/dev/null || true
+  fi
+  rm -f -- \
+    "$dir/ip-allowlist.service" \
+    "$dir/ip-allowlist.timer" \
+    "$dir/ip-allowlist-boot.service"
+  if have systemctl; then
+    systemctl daemon-reload 2>/dev/null || true
+  fi
+  out "removed systemd units"
+}
+
 cmd_uninstall() {
-  local script="$IP_ALLOWLIST_ROOT/uninstall.sh"
-  [[ -f "$script" ]] || die "uninstall.sh not found at $script"
-  local -a args=()
-  (( PURGE == 1 )) && args+=(--purge)
-  (( ASSUME_YES == 1 )) && args+=(--yes)
-  exec "$script" "${args[@]}"
+  [[ "$(id -u)" -eq 0 ]] || die "must be run as root (re-run with sudo)"
+
+  local purge="${PURGE:-0}"
+  if (( ASSUME_YES == 0 )); then
+    local extra=""
+    (( purge == 1 )) && extra=" and purge all data"
+    printf 'Uninstall ip-allowlist%s? [y/N] ' "$extra" >&2
+    local answer=""
+    read -r answer || true
+    case "$answer" in
+      y|Y|yes|YES) ;;
+      *) out "aborted"; return 0 ;;
+    esac
+  fi
+
+  local config_dir="/etc/ip-allowlist"
+  local cfg="$config_dir/config.conf"
+  local state_dir="/var/lib/ip-allowlist"
+  local log_file="/var/log/ip-allowlist.log"
+  local dropin="/etc/fail2ban/jail.d/zz-ip-allowlist.local"
+  local prefix="/usr/local"
+  local install_lib="$prefix/lib/ip-allowlist"
+  local symlink="$prefix/sbin/ip-allowlist"
+
+  local v
+  v=$(uninstall_cfg_value "$cfg" state_dir)
+  [[ -n "$v" ]] && state_dir=$(uninstall_abs_path "$config_dir" "$v")
+  v=$(uninstall_cfg_value "$cfg" log_file)
+  [[ -n "$v" ]] && log_file=$(uninstall_abs_path "$config_dir" "$v")
+  v=$(uninstall_cfg_value "$cfg" fail2ban_ignoreip_file)
+  [[ -n "$v" ]] && dropin="$v"
+
+  # Best effort: never abort an uninstall just because another run holds the lock.
+  local lock="${LOCK_FILE:-/run/ip-allowlist.lock}"
+  if ! lock_try "$lock"; then
+    out "WARNING: another ip-allowlist run holds the lock; continuing"
+  fi
+
+  remove_installed_firewall_objects "$dropin"
+  remove_installed_systemd
+  rm -f -- /etc/cron.d/ip-allowlist
+  rm -f -- /etc/logrotate.d/ip-allowlist
+
+  rm -f -- "$symlink"
+  rm -rf -- "$install_lib"
+  out "removed the installed program"
+
+  if (( purge == 1 )); then
+    rm -rf -- "$config_dir" "$state_dir"
+    rm -f -- "$log_file"
+    out "purged config, state and logs"
+  else
+    out "config and state preserved (use --purge to remove)"
+  fi
+  out "uninstall complete"
 }
 
 # ---------------------------------------------------------------------------

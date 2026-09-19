@@ -76,6 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names on one line)
 
 ### Changed
+- running `ip-allowlist` with no command now prints help instead of syncing
+- `uninstall` is built into the CLI; the separate uninstall.sh is removed
 - **BREAKING**: config now uses the planned flat keys
   (`firewall_enabled`, `sources_dir`, `state_dir`, `allow_ports`,
   `allow_protocol`, `enable_ipv4/6`, `log_level`, `log_target`, `log_file`,

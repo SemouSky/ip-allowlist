@@ -54,7 +54,7 @@ install:
 	@./install.sh
 
 uninstall:
-	@./uninstall.sh
+	@./ip-allowlist uninstall
 
 clean:
 	@rm -rf dist

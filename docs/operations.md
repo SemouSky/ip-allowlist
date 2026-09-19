@@ -26,7 +26,7 @@ enables `ip-allowlist.timer`.
 | `ip-allowlist version` | Show version |
 | `ip-allowlist upgrade [--check] [--version VER] [--from-dir DIR] [--from-tarball FILE] [--sync] [--force]` | Check for/install updates; `--sync` runs a sync after upgrading |
 | `ip-allowlist install` | Install system-wide |
-| `ip-allowlist uninstall [--purge]` | Remove |
+| `ip-allowlist uninstall [--purge] [--yes]` | Remove firewall objects, units, the program and (with `--purge`) config/state |
 
 Common flags: `--config FILE`, `--verbose`, `--quiet`, `--dry-run`, `--force`,
 `--json`, `--check`, `--purge`, `--yes`.
@@ -124,6 +124,6 @@ the old drop-in file.
 ## Uninstall
 
 ```bash
-sudo ./uninstall.sh            # keep config and state
-sudo ./uninstall.sh --purge    # remove everything
+sudo ip-allowlist uninstall           # keep config and state
+sudo ip-allowlist uninstall --purge   # remove everything
 ```

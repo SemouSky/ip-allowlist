@@ -28,7 +28,7 @@ sources.d/
   cloudflare.conf.example  Source template
 systemd/                Timer + service + boot service
 install.sh              Atomic staged install/upgrade
-uninstall.sh            Removal (--purge for data)
+(uninstall is built into the ip-allowlist CLI)
 tests/                  Unit + container integration tests
 ```
 

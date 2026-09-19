@@ -94,6 +94,6 @@ logrotate 配置安装在 `/etc/logrotate.d/ip-allowlist`。
 ## 卸载
 
 ```bash
-sudo ./uninstall.sh            # 保留配置与状态
-sudo ./uninstall.sh --purge    # 全部移除
+sudo ip-allowlist uninstall           # 保留配置与状态
+sudo ip-allowlist uninstall --purge   # 全部移除
 ```

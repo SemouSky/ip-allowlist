@@ -49,7 +49,7 @@ jobs:
           NAME="ip-allowlist-v${{ steps.version.outputs.version }}"
           tar -czf "dist/${NAME}.tar.gz" \
             --transform "s|^|${NAME}/|" \
-            ip-allowlist lib install.sh uninstall.sh config systemd version.txt \
+            ip-allowlist lib install.sh config systemd version.txt \
             README.md LICENSE CHANGELOG.md
           ( cd dist && sha256sum "${NAME}.tar.gz" > SHA256SUMS )
           cat dist/SHA256SUMS

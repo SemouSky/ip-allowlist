@@ -133,6 +133,7 @@ assert_eq "re-run is idempotent" "$before" "$after"
 # ---------------------------------------------------------------------------
 printf '1.2.3.0/24\n9.9.9.9\n' >"$WS/v4.txt"
 "$CLI" --config "$CONF" sync >"$WS/out3" 2>&1
+assert_contains "nft applies changed sources incrementally" "$(cat "$WS/out3")" "nft: partial apply"
 rules="$(nft list table inet ip_allowlist 2>/dev/null || true)"
 assert_contains "change applied (9.9.9.9)" "$rules" "9.9.9.9"
 assert_not_contains "removed entry gone (5.6.7.8)" "$rules" "5.6.7.8"

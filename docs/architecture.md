@@ -89,8 +89,12 @@ A single fixed table `inet ip_allowlist` holds, per source:
 Rules look like `ip saddr @al_<source>_v4 tcp dport { 443 } accept`, or
 `ip saddr @al_<source>_v4 accept` when `allow_ports=all`.
 
-The full table is regenerated and applied in one atomic `nft -f` transaction
-using the idempotent idiom:
+When the table already exists, only the sources that changed are updated in one
+atomic `nft -f` transaction: their sets are flushed and refilled, their chain is
+flushed and rewritten, and removed sources have their jump rule, chain and sets
+deleted. Other sources are untouched. On the first run, a backend switch, or
+when the table is missing, the full table is regenerated atomically using the
+idempotent idiom:
 
 ```
 table inet ip_allowlist {}
@@ -192,15 +196,9 @@ allow manual rollback.
 
 ## Plan conformance notes
 
-Two items from the original plan are intentionally implemented differently;
-neither changes observable behaviour:
+One item from the original plan is intentionally implemented differently and
+does not change observable behaviour:
 
-- **nft update strategy**: the plan describes per-source `flush chain` +
-  element reset inside one `nft -f` transaction. The tool instead regenerates
-  the whole `inet ip_allowlist` table in one atomic `nft -f` transaction. Both
-  are atomic and leave other sources untouched; regeneration is simpler, has a
-  single code path for add/update/remove, and is covered by verification and
-  snapshot rollback.
 - **Test harness**: the plan lists `tests/bats/*.bats` and
   `tests/docker/scenarios/*`. The tool uses `tests/unit.sh` plus
   `tests/integration/{run,ufw,firewalld,connectivity}.sh`, driven by

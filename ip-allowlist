@@ -216,6 +216,10 @@ ALLOW_EMPTY_SOURCES="false"
 FAIL2BAN_DROPIN="/etc/fail2ban/jail.d/zz-ip-allowlist.local"
 FAIL2BAN_MERGE_EXISTING="true"
 FIREWALLD_ZONE=""
+# Set by cmd_sync to drive per-source nft updates.
+FIREWALL_CHANGED_SOURCES=()
+FIREWALL_REMOVED_SOURCES=()
+FIREWALL_FULL_REBUILD=0
 
 UPDATE_INTERVAL=86400
 TIMER_INTERVAL=900
@@ -786,6 +790,9 @@ update_check_maybe() {
 cmd_sync() {
   [[ -d "$SOURCES_DIR" ]] || die "sources dir not found or unreadable: $SOURCES_DIR"
   state_init "$STATE_DIR"
+  FIREWALL_CHANGED_SOURCES=()
+  FIREWALL_REMOVED_SOURCES=()
+  FIREWALL_FULL_REBUILD=0
 
   # Determine ready targets. A target that is not available is skipped with a
   # warning; if every target is skipped the run is a no-op and exits 0.
@@ -886,6 +893,7 @@ cmd_sync() {
         log_info "source $name: disabled, removing from firewall"
         state_remove_source "$name"
         state_known_remove "$name"
+        FIREWALL_REMOVED_SOURCES+=("$name")
         needs_apply=1
       else
         log_debug "source $name: disabled, skipping"
@@ -944,6 +952,7 @@ cmd_sync() {
         rm -f -- "$current_file"
         state_remove_source "$orphan"
         state_known_remove "$orphan"
+        FIREWALL_REMOVED_SOURCES+=("$orphan")
         needs_apply=1
       fi
     done
@@ -960,6 +969,7 @@ cmd_sync() {
         log_info "source $kname: no longer configured, removing from firewall"
         state_remove_source "$kname"
         state_known_remove "$kname"
+        FIREWALL_REMOVED_SOURCES+=("$kname")
         needs_apply=1
       fi
     done < <(state_known_list)
@@ -970,6 +980,7 @@ cmd_sync() {
   if [[ -n "$prev_backend" && "$prev_backend" != "$BACKEND" ]] && is_valid_backend "$prev_backend"; then
     backend_changed=1
     needs_apply=1
+    FIREWALL_FULL_REBUILD=1
     log_info "backend changed from $prev_backend to $BACKEND; rebuilding allow-list"
   fi
 
@@ -999,6 +1010,8 @@ cmd_sync() {
     needs_apply=1
     log_debug "desired firewall state changed"
   fi
+
+  FIREWALL_CHANGED_SOURCES=("${changed_names[@]:-}")
 
   if (( firewall_ready == 0 )); then
     log_info "firewall target skipped; firewall unchanged"

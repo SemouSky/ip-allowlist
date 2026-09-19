@@ -85,7 +85,7 @@ sources.d/*.conf
 
 规则形如 `ip saddr @al_<source>_v4 tcp dport { 443 } accept`；当 `allow_ports=all` 时为 `ip saddr @al_<source>_v4 accept`。
 
-整表重新生成，并通过一次 `nft -f` 原子应用，使用如下幂等写法：
+当表已存在时，仅在一次原子 `nft -f` 事务中更新发生变化的来源：flush 并重填其 set、flush 并重写其 chain，被删除的来源则移除其 jump 规则、chain 与 set；其他来源不受影响。首次运行、后端切换或表缺失时，整表以如下幂等写法原子重建：
 
 ```
 table inet ip_allowlist {}
@@ -146,9 +146,8 @@ rule family="ipv4" source ipset="ia-<source>-v4-<hash>" accept
 
 ## 计划一致性说明
 
-计划中有两项采用了不同的实现形态，二者都不改变可观察行为：
+计划中有一项采用了不同的实现形态，且不改变可观察行为：
 
-- **nft 更新策略**：计划描述为在单个 `nft -f` 事务内按来源 `flush chain` 并重设元素；本工具改为在一次原子 `nft -f` 事务中重建整个 `inet ip_allowlist` 表。两者都是原子的且不影响其他来源；重建实现更简单、增删改走同一代码路径，并有自检与快照回滚覆盖。
 - **测试形态**：计划为 `tests/bats/*.bats` 与 `tests/docker/scenarios/*`；本工具使用 `tests/unit.sh` 与 `tests/integration/{run,ufw,firewalld,connectivity}.sh`，由 `tests/run.sh` / `make test-unit|test-integration` 驱动，覆盖同等行为（解析、继承、哈希、骤降保护、三后端、fail2ban、生命周期、崩溃恢复、安装升级、连通性）。
 
 default-deny 验证属于非目标；且 nftables 的 `accept` 在不同表的 base chain 之间不是终结判定，详见 README。

@@ -92,8 +92,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restored as a last-resort rollback; firewalld records its exact rich rules
 - veth/netns connectivity integration test; documented that nft `accept` is not
   final across base chains and that default-deny is out of scope
-- documented the two intentional plan deltas (nft whole-table regeneration
-  instead of per-source flush; custom test scripts instead of bats/scenarios)
+- nft applies per-source updates (flush set/chain, delete removed sources) in a
+  single transaction when the table exists, falling back to full regeneration
+  only on first run, backend switch, or a missing table
+- documented the remaining intentional plan delta (custom test scripts instead
+  of bats/scenarios)
 
 ## [0.0.0] - 2026-09-18
 

@@ -54,28 +54,16 @@ stop_services() {
   log "removed systemd units"
 }
 
-read_config_value() {
-  local key="$1" default="$2"
-  local conf="$CONFIG_DIR/config.conf"
-  [[ -f "$conf" ]] || { printf '%s' "$default"; return 0; }
-  local value
-  value=$(sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" "$conf" | tail -n1)
-  value=$(printf '%s' "$value" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-  printf '%s' "${value:-$default}"
-}
-
 remove_firewall_state() {
-  local nft_bin family table
+  local nft_bin t
   nft_bin=$(command -v nft 2>/dev/null || true)
   [[ -n "$nft_bin" ]] || return 0
-  family=$(read_config_value firewall_table_family inet)
-  table=$(read_config_value firewall_chain_name ip-allowlist)
-  case "$family" in inet|ip|ip6) ;; *) family=inet ;; esac
-  [[ "$table" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || table=ip-allowlist
-  if nft list table "$family" "$table" >/dev/null 2>&1; then
-    nft delete table "$family" "$table" 2>/dev/null || true
-    log "removed nftables table $family $table"
-  fi
+  for t in ip_allowlist ip-allowlist; do
+    if nft list table inet "$t" >/dev/null 2>&1; then
+      nft delete table inet "$t" 2>/dev/null || true
+      log "removed nftables table inet $t"
+    fi
+  done
 }
 
 remove_fail2ban_dropin() {

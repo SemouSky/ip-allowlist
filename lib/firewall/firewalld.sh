@@ -30,6 +30,16 @@ firewalld_running() {
   firewall-cmd --state >/dev/null 2>&1
 }
 
+# Ready = firewalld running; when systemd is the init system, the unit must be
+# active as well (containers that start firewalld directly are accepted).
+firewalld_service_ready() {
+  firewalld_running || return 1
+  if have systemctl && [[ -d /run/systemd/system ]]; then
+    systemctl is-active --quiet firewalld 2>/dev/null || return 1
+  fi
+  return 0
+}
+
 firewalld_validate() {
   firewalld_available || die "firewalld backend selected but 'firewall-cmd' is not installed"
   firewalld_running || die "firewalld backend selected but firewalld is not running"

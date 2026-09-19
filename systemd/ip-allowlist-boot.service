@@ -1,14 +1,13 @@
 [Unit]
-Description=ip-allowlist firewall allow-list sync at boot
+Description=ip-allowlist firewall allow-list rebuild at boot
 Documentation=https://github.com/SemouSky/ip-allowlist
-After=network-online.target
-Wants=network-online.target
+After=nftables.service
 ConditionPathExists=/etc/ip-allowlist/config.conf
 ConditionPathExists=/etc/ip-allowlist/update-on-boot
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/ip-allowlist sync --force
+ExecStart=/usr/local/sbin/ip-allowlist apply-offline
 User=root
 Group=root
 ProtectSystem=strict

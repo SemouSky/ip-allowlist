@@ -193,15 +193,6 @@ load_backend() {
   [[ -f "$file" ]] || die "firewall backend implementation not found: $file"
   # shellcheck source=/dev/null
   source "$file"
-
-  case "$backend" in
-    nft)
-      NFT_TABLE="$FIREWALL_CHAIN_NAME"
-      NFT_FAMILY="$FIREWALL_TABLE_FAMILY"
-      ;;
-    firewalld)
-      ;;
-  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -216,8 +207,6 @@ STATE_DIR=""
 SOURCES_DIR=""
 BACKEND=""
 # nft object names are fixed by the plan; kept internal (not config keys).
-FIREWALL_CHAIN_NAME="ip-allowlist"
-FIREWALL_TABLE_FAMILY="inet"
 
 FIREWALL_ENABLED="true"
 FAIL2BAN_ENABLED="true"
@@ -555,8 +544,6 @@ cleanup_previous_backend() {
       (
         # shellcheck source=/dev/null
         source "$IP_ALLOWLIST_ROOT/lib/firewall/nft.sh"
-        NFT_TABLE="$FIREWALL_CHAIN_NAME"
-        NFT_FAMILY="$FIREWALL_TABLE_FAMILY"
         nft_cleanup
       )
       ;;
@@ -706,8 +693,8 @@ cmd_sync() {
     case "$BACKEND" in
       nft) nft_available || { log_warn "nft is not available; skipping firewall target"; firewall_ready=0; } ;;
       ufw) ufw_available || { log_warn "ufw is not available; skipping firewall target"; firewall_ready=0; } ;;
-      firewalld) { firewalld_available && firewalld_running; } \
-        || { log_warn "firewalld is not running; skipping firewall target"; firewall_ready=0; } ;;
+      firewalld) { firewalld_available && firewalld_service_ready; } \
+        || { log_warn "firewalld is not ready; skipping firewall target"; firewall_ready=0; } ;;
     esac
     if (( firewall_ready == 1 )); then
       firewall_check_conflicts "$BACKEND"
@@ -885,8 +872,6 @@ cmd_sync() {
   fp_tmp=$(tmpfile "fingerprint")
   {
     printf 'backend=%s\n' "$BACKEND"
-    printf 'chain=%s\n' "$FIREWALL_CHAIN_NAME"
-    printf 'family=%s\n' "$FIREWALL_TABLE_FAMILY"
     printf 'zone=%s\n' "$FIREWALLD_ZONE"
     printf 'fail2ban_enabled=%s\n' "$FAIL2BAN_ENABLED"
     printf 'fail2ban_file=%s\n' "$FAIL2BAN_DROPIN"

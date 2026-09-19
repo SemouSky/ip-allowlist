@@ -404,13 +404,13 @@ enable_ipv4=true
 enable_ipv6=false
 EOF
 NFT_FAMILY=inet
-NFT_TABLE=ip-allowlist
+NFT_TABLE=ip_allowlist
 nft_out="$(mktemp)"
 nft_generate_ruleset "$nft_state" "$nft_out"
 nft_content="$(cat "$nft_out")"
-assert_str_contains "nft emits port match" "$nft_content" "ip saddr @v4_src tcp dport { 443, 8000-8080 } accept"
-assert_str_not_contains "nft omits disabled v6" "$nft_content" "v6_src"
-assert_str_not_contains "nft omits plain accept when ports set" "$nft_content" "ip saddr @v4_src accept"
+assert_str_contains "nft emits port match" "$nft_content" "ip saddr @al_src_v4 tcp dport { 443, 8000-8080 } accept"
+assert_str_not_contains "nft omits disabled v6" "$nft_content" "al_src_v6"
+assert_str_not_contains "nft omits plain accept when ports set" "$nft_content" "ip saddr @al_src_v4 accept"
 
 # ---------------------------------------------------------------------------
 # Summary

@@ -29,9 +29,22 @@ ufw_is_active() {
 
 ufw_validate() {
   ufw_available || die "ufw backend selected but 'ufw' is not installed"
+  if ! ufw_version_supported; then
+    log_warn "ufw version is older than 0.34; rule comments may not be supported"
+  fi
   if ! ufw_is_active; then
     log_warn "ufw is not active; rules will be stored but not enforced until 'ufw enable'"
   fi
+}
+
+# Return 0 when ufw is >= 0.34 (comment support).
+ufw_version_supported() {
+  local v maj min
+  v=$(ufw --version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+' | head -n1)
+  [[ -n "$v" ]] || return 1
+  maj="${v%%.*}"
+  min="${v##*.}"
+  (( 10#$maj > 0 || (10#$maj == 0 && 10#$min >= 34) ))
 }
 
 # Normalize a CIDR reported by ufw back to canonical form.

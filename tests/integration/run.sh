@@ -51,7 +51,7 @@ fi
 # ---------------------------------------------------------------------------
 WS="$(mktemp -d)"
 cleanup() {
-  nft delete table inet ip-allowlist 2>/dev/null || true
+  nft delete table inet ip_allowlist 2>/dev/null || true
   rm -rf -- "$WS"
 }
 trap cleanup EXIT
@@ -104,12 +104,12 @@ else
   cat "$WS/out1" >&2
 fi
 
-rules="$(nft list table inet ip-allowlist 2>/dev/null || true)"
+rules="$(nft list table inet ip_allowlist 2>/dev/null || true)"
 assert_contains "nft table contains v4 cidr" "$rules" "1.2.3.0/24"
 assert_contains "nft table contains v4 host" "$rules" "5.6.7.8"
 assert_contains "nft table contains v6 cidr" "$rules" "2001:db8::/32"
-assert_contains "nft chain accepts ip saddr" "$rules" "ip saddr @v4_v4src accept"
-assert_contains "nft chain accepts ip6 saddr" "$rules" "ip6 saddr @v6_v6src accept"
+assert_contains "nft chain accepts ip saddr" "$rules" "ip saddr @al_v4src_v4 accept"
+assert_contains "nft chain accepts ip6 saddr" "$rules" "ip6 saddr @al_v6src_v6 accept"
 
 if [[ -f "$STATE/current/v4src.ips" ]]; then pass "state current file written"; else fail "state current file written"; fi
 if [[ -f "$STATE/applied/v4src.hash" ]]; then pass "applied hash written"; else fail "applied hash written"; fi
@@ -122,9 +122,9 @@ fi
 # ---------------------------------------------------------------------------
 # 2. Idempotent re-run
 # ---------------------------------------------------------------------------
-before="$(nft list table inet ip-allowlist 2>/dev/null || true)"
+before="$(nft list table inet ip_allowlist 2>/dev/null || true)"
 "$CLI" --config "$CONF" sync >"$WS/out2" 2>&1
-after="$(nft list table inet ip-allowlist 2>/dev/null || true)"
+after="$(nft list table inet ip_allowlist 2>/dev/null || true)"
 assert_eq "re-run is idempotent" "$before" "$after"
 
 # ---------------------------------------------------------------------------
@@ -132,7 +132,7 @@ assert_eq "re-run is idempotent" "$before" "$after"
 # ---------------------------------------------------------------------------
 printf '1.2.3.0/24\n9.9.9.9\n' >"$WS/v4.txt"
 "$CLI" --config "$CONF" sync >"$WS/out3" 2>&1
-rules="$(nft list table inet ip-allowlist 2>/dev/null || true)"
+rules="$(nft list table inet ip_allowlist 2>/dev/null || true)"
 assert_contains "change applied (9.9.9.9)" "$rules" "9.9.9.9"
 assert_not_contains "removed entry gone (5.6.7.8)" "$rules" "5.6.7.8"
 
@@ -150,7 +150,7 @@ assert_contains "check json reports no change" "$(cat "$WS/out3j")" '"changed":f
 printf '1.2.3.0/24\n9.9.9.9\n8.8.8.8\n' >"$WS/v4.txt"
 "$CLI" --config "$CONF" check >"$WS/out3d" 2>&1
 assert_contains "check detects pending change" "$(cat "$WS/out3d")" "would change"
-rules="$(nft list table inet ip-allowlist 2>/dev/null || true)"
+rules="$(nft list table inet ip_allowlist 2>/dev/null || true)"
 assert_not_contains "check did not apply change" "$rules" "8.8.8.8"
 
 # ---------------------------------------------------------------------------
@@ -259,7 +259,7 @@ paths=$WS/v6.txt
 min_entries=1
 EOF
 "$CLI" --config "$CONF" sync >"$WS/out10" 2>&1
-rules="$(nft list table inet ip-allowlist 2>/dev/null || true)"
+rules="$(nft list table inet ip_allowlist 2>/dev/null || true)"
 assert_not_contains "disabled source not in firewall" "$rules" "2001:db8::/32"
 if grep -Fxq "v6src" "$STATE/sources.known" 2>/dev/null; then
   fail "disabled source removed from known list"
@@ -402,7 +402,7 @@ assert_contains "syslog target still lists sources" "$(cat "$WS/out14")" "v4src"
 # 10b. cleanup command removes firewall objects
 # ---------------------------------------------------------------------------
 "$CLI" --config "$CONF" cleanup >"$WS/out12b" 2>&1
-if nft list table inet ip-allowlist >/dev/null 2>&1; then
+if nft list table inet ip_allowlist >/dev/null 2>&1; then
   fail "cleanup removes nft table"
 else
   pass "cleanup removes nft table"
@@ -417,7 +417,7 @@ paths=$WS/v4.txt
 min_entries=1
 EOF
 "$CLI" --config "$CONF" sync >"$WS/out12c" 2>&1
-if nft list table inet ip-allowlist >/dev/null 2>&1; then
+if nft list table inet ip_allowlist >/dev/null 2>&1; then
   pass "sync restores allow-list after cleanup"
 else
   fail "sync restores allow-list after cleanup"
@@ -451,7 +451,7 @@ EOF
 
 mk_switch_conf nft nft
 "$CLI" --config "$SW/nft.conf" sync >"$SW/out-nft" 2>&1
-if nft list table inet ip-allowlist >/dev/null 2>&1; then
+if nft list table inet ip_allowlist >/dev/null 2>&1; then
   pass "switch: nft table applied"
 else
   fail "switch: nft table applied"
@@ -460,7 +460,7 @@ fi
 if command -v ufw >/dev/null 2>&1; then
   mk_switch_conf ufw ufw
   "$CLI" --config "$SW/ufw.conf" sync >"$SW/out-ufw" 2>&1
-  if nft list table inet ip-allowlist >/dev/null 2>&1; then
+  if nft list table inet ip_allowlist >/dev/null 2>&1; then
     fail "backend switch removes old nft table"
   else
     pass "backend switch removes old nft table"
@@ -500,7 +500,7 @@ if [[ ! -f "$FB/old.conf" && -f "$FB/new.conf" ]]; then
 else
   fail "fail2ban drop-in path change removes old drop-in"
 fi
-nft delete table inet ip-allowlist 2>/dev/null || true
+nft delete table inet ip_allowlist 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # 10e. rule parameters: ports, protocol, address families (nft)
@@ -539,16 +539,16 @@ log_target=stdout
 update_interval=0
 EOF
 "$CLI" --config "$RP/config.conf" sync >"$RP/out" 2>&1
-rules="$(nft list table inet ip-allowlist 2>/dev/null || true)"
-assert_contains "nft limited ports rule" "$rules" "ip saddr @v4_rp tcp dport 443 accept"
-assert_not_contains "nft disabled ipv6 has no v6 set" "$rules" "v6_rp "
-assert_contains "nft udp port rule" "$rules" "ip6 saddr @v6_rp2 udp dport 443 accept"
-assert_not_contains "nft disabled ipv4 has no v4 set" "$rules" "v4_rp2 "
+rules="$(nft list table inet ip_allowlist 2>/dev/null || true)"
+assert_contains "nft limited ports rule" "$rules" "ip saddr @al_rp_v4 tcp dport 443 accept"
+assert_not_contains "nft disabled ipv6 has no v6 set" "$rules" "al_rp_v6"
+assert_contains "nft udp port rule" "$rules" "ip6 saddr @al_rp2_v6 udp dport 443 accept"
+assert_not_contains "nft disabled ipv4 has no v4 set" "$rules" "al_rp2_v4"
 
 # Changing only allow_ports must rebuild even though the source data is unchanged.
 sed -i 's/^allow_ports=443$/allow_ports=443,8443/' "$RP/sources.d/rp.conf"
 "$CLI" --config "$RP/config.conf" sync >"$RP/out2" 2>&1
-rules="$(nft list table inet ip-allowlist 2>/dev/null || true)"
+rules="$(nft list table inet ip_allowlist 2>/dev/null || true)"
 assert_contains "nft port parameter change rebuilds" "$rules" "tcp dport { 443, 8443 } accept"
 "$CLI" --config "$RP/config.conf" cleanup >/dev/null 2>&1
 
@@ -617,7 +617,7 @@ FAIL2BAN_JAIL_CONF="$ME/none" FAIL2BAN_JAIL_LOCAL="$ME/jail.local" FAIL2BAN_JAIL
 dropin="$(cat "$ME/dropin.conf" 2>/dev/null || true)"
 assert_contains "merge_existing=false keeps source ip" "$dropin" "1.2.3.0/24"
 assert_not_contains "merge_existing=false drops user ip" "$dropin" "10.9.9.9"
-nft delete table inet ip-allowlist 2>/dev/null || true
+nft delete table inet ip_allowlist 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # 11. install/uninstall smoke test

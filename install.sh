@@ -282,17 +282,29 @@ install_systemd() {
   install -m 0644 "$SRC_DIR/systemd/ip-allowlist.timer"   "$SYSTEMD_DIR/ip-allowlist.timer"
   install -m 0644 "$SRC_DIR/systemd/ip-allowlist-boot.service" "$SYSTEMD_DIR/ip-allowlist-boot.service"
 
-  # Honour update_on_boot from the installed config.
-  if grep -qiE '^[[:space:]]*update_on_boot[[:space:]]*=[[:space:]]*(true|1|yes|on)' "$CONFIG_DIR/config.conf" 2>/dev/null; then
+  # The boot rebuild service only applies to the nft backend and is gated by
+  # update_on_boot.
+  local backend=""
+  backend=$(sed -n 's/^[[:space:]]*firewall_backend[[:space:]]*=[[:space:]]*//p' "$CONFIG_DIR/config.conf" 2>/dev/null | tail -n1)
+  backend=$(printf '%s' "$backend" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  if [[ "$backend" == "nft" ]] \
+    && grep -qiE '^[[:space:]]*update_on_boot[[:space:]]*=[[:space:]]*(true|1|yes|on)' "$CONFIG_DIR/config.conf" 2>/dev/null; then
     : >"$CONFIG_DIR/update-on-boot"
   else
     rm -f -- "$CONFIG_DIR/update-on-boot"
+  fi
+
+  # Warn when the system's own nftables ruleset flushes everything at boot.
+  if [[ -f /etc/nftables.conf ]] && grep -qiE '^[[:space:]]*flush[[:space:]]+ruleset' /etc/nftables.conf; then
+    warn "/etc/nftables.conf contains 'flush ruleset'; it may remove the ip_allowlist table at boot"
   fi
 
   systemctl daemon-reload || warn "systemctl daemon-reload failed"
   systemctl enable --now ip-allowlist.timer || warn "failed to enable ip-allowlist.timer"
   if [[ -f "$CONFIG_DIR/update-on-boot" ]]; then
     systemctl enable ip-allowlist-boot.service || warn "failed to enable ip-allowlist-boot.service"
+  else
+    systemctl disable ip-allowlist-boot.service 2>/dev/null || true
   fi
   log "systemd timer enabled"
 }

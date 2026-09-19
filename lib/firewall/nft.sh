@@ -1,13 +1,26 @@
 #!/usr/bin/env bash
 # ip-allowlist nftables backend.
+#
+# Model (per the plan):
+#   table inet ip_allowlist
+#     set al_<name>_v4  { type ipv4_addr; flags interval; ... }
+#     set al_<name>_v6  { type ipv6_addr; flags interval; ... }
+#     chain al_<name>   { ip saddr @al_<name>_v4 tcp dport { 443 } accept ... }
+#     chain input       { type filter hook input priority filter; policy accept;
+#                         jump al_<name>; ... }
+#
+# The whole table is regenerated and applied in one atomic `nft -f` transaction.
+#
 # Sourced by the main script; do not execute directly.
 
 [[ -n "${_IP_ALLOWLIST_NFT_LOADED:-}" ]] && return 0
 _IP_ALLOWLIST_NFT_LOADED=1
 
-NFT_TABLE="${NFT_TABLE:-ip-allowlist}"
+NFT_TABLE="${NFT_TABLE:-ip_allowlist}"
 NFT_FAMILY="${NFT_FAMILY:-inet}"
-NFT_PRIORITY="${NFT_PRIORITY:--1}"
+NFT_PRIORITY="${NFT_PRIORITY:-filter}"
+# Table name used by releases before the plan naming was adopted.
+NFT_LEGACY_TABLE="ip-allowlist"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -23,12 +36,10 @@ nft_sanitize_name() {
   printf '%s' "$name"
 }
 
-# Return 0 if nftables is available and usable.
 nft_available() {
   have nft
 }
 
-# Validate the nft backend environment.
 nft_validate() {
   nft_available || die "nftables backend selected but 'nft' is not installed"
 }
@@ -37,7 +48,7 @@ nft_validate() {
 # Ruleset generation
 # ---------------------------------------------------------------------------
 
-# Emit an nft set definition. Usage: nft_emit_set <set_name> <type> <entries...>
+# Emit a set definition. Usage: nft_emit_set <set_name> <type> <elements...>
 nft_emit_set() {
   local set_name="$1" type="$2"
   shift 2
@@ -59,9 +70,9 @@ nft_emit_set() {
   printf '  }\n'
 }
 
-# Emit one accept rule for a source set, honouring ports and protocols.
-# Usage: nft_emit_rule <ip|ip6> <set_name> <ports> <protocols>
-nft_emit_rule() {
+# Emit one source's chain with rules for the given family.
+# Usage: nft_emit_source_rules <family ip|ip6> <set_name> <ports> <protocols>
+nft_emit_source_rules() {
   local family="$1" setname="$2" ports="$3" protocols="$4"
   if [[ -z "$protocols" ]]; then
     printf '    %s saddr @%s accept\n' "$family" "$setname"
@@ -69,11 +80,8 @@ nft_emit_rule() {
   fi
   local proto
   for proto in $protocols; do
-    if [[ "$ports" == "any" ]]; then
-      printf '    %s saddr @%s meta l4proto %s accept\n' "$family" "$setname" "$proto"
-    else
-      printf '    %s saddr @%s %s dport { %s } accept\n' "$family" "$setname" "$proto" "${ports//,/, }"
-    fi
+    printf '    %s saddr @%s %s dport { %s } accept\n' \
+      "$family" "$setname" "$proto" "${ports//,/, }"
   done
 }
 
@@ -83,68 +91,83 @@ nft_generate_ruleset() {
   local state_dir="$1" out="$2"
   local name entries base ports protocol ipv4 ipv6 protocols
 
-  local -a set_names=() set_types=() set_entries=()
-  local -a rule_families=() rule_sets=() rule_ports=() rule_protocols=()
-
-  for entries in "$state_dir"/current/*.ips; do
-    [[ -e "$entries" ]] || continue
-    base=$(basename -- "$entries" .ips)
-    name=$(nft_sanitize_name "$base")
-
-    ports=$(rule_spec_get "$state_dir" "$base" allow_ports any)
-    protocol=$(rule_spec_get "$state_dir" "$base" allow_protocol any)
-    ipv4=$(rule_spec_get "$state_dir" "$base" enable_ipv4 true)
-    ipv6=$(rule_spec_get "$state_dir" "$base" enable_ipv6 true)
-    protocols=$(effective_protocols "$protocol" "$ports")
-
-    local -a v4=() v6=()
-    local line
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      [[ -z "$line" ]] && continue
-      if [[ "$line" == *:* ]]; then
-        v6+=("$line")
-      else
-        v4+=("$line")
-      fi
-    done <"$entries"
-
-    if [[ "$ipv4" == "true" ]] && (( ${#v4[@]} > 0 )); then
-      set_names+=("v4_${name}")
-      set_types+=("ipv4_addr")
-      set_entries+=("$(printf '%s\n' "${v4[@]}")")
-      rule_families+=("ip")
-      rule_sets+=("v4_${name}")
-      rule_ports+=("$ports")
-      rule_protocols+=("$protocols")
-    fi
-    if [[ "$ipv6" == "true" ]] && (( ${#v6[@]} > 0 )); then
-      set_names+=("v6_${name}")
-      set_types+=("ipv6_addr")
-      set_entries+=("$(printf '%s\n' "${v6[@]}")")
-      rule_families+=("ip6")
-      rule_sets+=("v6_${name}")
-      rule_ports+=("$ports")
-      rule_protocols+=("$protocols")
-    fi
-  done
-
   {
     printf 'table %s %s {}\n' "$NFT_FAMILY" "$NFT_TABLE"
     printf 'delete table %s %s\n' "$NFT_FAMILY" "$NFT_TABLE"
     printf 'table %s %s {\n' "$NFT_FAMILY" "$NFT_TABLE"
 
-    local i
-    for (( i = 0; i < ${#set_names[@]}; i++ )); do
-      local -a items=()
-      mapfile -t items <<<"${set_entries[i]}"
-      nft_emit_set "${set_names[i]}" "${set_types[i]}" "${items[@]}"
+    # First pass: sets and per-source chains.
+    for entries in "$state_dir"/current/*.ips; do
+      [[ -e "$entries" ]] || continue
+      base=$(basename -- "$entries" .ips)
+      name=$(nft_sanitize_name "$base")
+      ports=$(rule_spec_get "$state_dir" "$base" allow_ports any)
+      protocol=$(rule_spec_get "$state_dir" "$base" allow_protocol any)
+      ipv4=$(rule_spec_get "$state_dir" "$base" enable_ipv4 true)
+      ipv6=$(rule_spec_get "$state_dir" "$base" enable_ipv6 true)
+      protocols=$(effective_protocols "$protocol" "$ports")
+
+      local -a v4=() v6=()
+      local line
+      while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" ]] && continue
+        if [[ "$line" == *:* ]]; then v6+=("$line"); else v4+=("$line"); fi
+      done <"$entries"
+
+      if [[ "$ipv4" == "true" ]] && (( ${#v4[@]} > 0 )); then
+        nft_emit_set "al_${name}_v4" "ipv4_addr" "${v4[@]}"
+      fi
+      if [[ "$ipv6" == "true" ]] && (( ${#v6[@]} > 0 )); then
+        nft_emit_set "al_${name}_v6" "ipv6_addr" "${v6[@]}"
+      fi
+
+      # Skip the per-source chain when neither family has entries.
+      local have4=0 have6=0
+      [[ "$ipv4" == "true" ]] && (( ${#v4[@]} > 0 )) && have4=1
+      [[ "$ipv6" == "true" ]] && (( ${#v6[@]} > 0 )) && have6=1
+      (( have4 == 1 || have6 == 1 )) || continue
+
+      printf '  chain al_%s {\n' "$name"
+      if (( have4 == 1 )); then
+        nft_emit_source_rules "ip" "al_${name}_v4" "$ports" "$protocols"
+      fi
+      if (( have6 == 1 )); then
+        nft_emit_source_rules "ip6" "al_${name}_v6" "$ports" "$protocols"
+      fi
+      printf '  }\n'
     done
 
-    if (( ${#set_names[@]} > 0 )); then
+    # Second pass: base chain jumping to each source chain.
+    local any=0
+    for entries in "$state_dir"/current/*.ips; do
+      [[ -e "$entries" ]] || continue
+      base=$(basename -- "$entries" .ips)
+      name=$(nft_sanitize_name "$base")
+      ipv4=$(rule_spec_get "$state_dir" "$base" enable_ipv4 true)
+      ipv6=$(rule_spec_get "$state_dir" "$base" enable_ipv6 true)
+      local has4=0 has6=0
+      grep -qv ':' "$entries" 2>/dev/null && has4=1
+      grep -q ':' "$entries" 2>/dev/null && has6=1
+      if { [[ "$ipv4" == "true" && $has4 -eq 1 ]] || [[ "$ipv6" == "true" && $has6 -eq 1 ]]; }; then
+        any=1
+      fi
+    done
+
+    if (( any == 1 )); then
       printf '  chain input {\n'
       printf '    type filter hook input priority %s; policy accept;\n' "$NFT_PRIORITY"
-      for (( i = 0; i < ${#rule_sets[@]}; i++ )); do
-        nft_emit_rule "${rule_families[i]}" "${rule_sets[i]}" "${rule_ports[i]}" "${rule_protocols[i]}"
+      for entries in "$state_dir"/current/*.ips; do
+        [[ -e "$entries" ]] || continue
+        base=$(basename -- "$entries" .ips)
+        name=$(nft_sanitize_name "$base")
+        ipv4=$(rule_spec_get "$state_dir" "$base" enable_ipv4 true)
+        ipv6=$(rule_spec_get "$state_dir" "$base" enable_ipv6 true)
+        local j4=0 j6=0
+        grep -qv ':' "$entries" 2>/dev/null && j4=1
+        grep -q ':' "$entries" 2>/dev/null && j6=1
+        if { [[ "$ipv4" == "true" && $j4 -eq 1 ]] || [[ "$ipv6" == "true" && $j6 -eq 1 ]]; }; then
+          printf '    jump al_%s\n' "$name"
+        fi
       done
       printf '  }\n'
     fi
@@ -156,6 +179,13 @@ nft_generate_ruleset() {
 # ---------------------------------------------------------------------------
 # Apply
 # ---------------------------------------------------------------------------
+
+# Remove the table used by releases before the plan naming was adopted.
+nft_cleanup_legacy() {
+  nft list table "$NFT_FAMILY" "$NFT_LEGACY_TABLE" >/dev/null 2>&1 || return 0
+  log_warn "removing legacy nft table $NFT_FAMILY $NFT_LEGACY_TABLE"
+  nft delete table "$NFT_FAMILY" "$NFT_LEGACY_TABLE" 2>/dev/null || true
+}
 
 # Apply nftables rules for all current sources.
 # Usage: nft_apply <state_dir>
@@ -177,9 +207,14 @@ nft_apply() {
     return 1
   fi
   log_info "nft: applied ruleset (table $NFT_FAMILY $NFT_TABLE)"
+  nft_cleanup_legacy
 }
 
-# Verify that every expected set exists in the live table.
+# ---------------------------------------------------------------------------
+# Verify / snapshot / cleanup / status
+# ---------------------------------------------------------------------------
+
+# Verify that every expected set and per-source chain exists.
 # Usage: nft_verify <state_dir>
 nft_verify() {
   local state_dir="$1"
@@ -195,25 +230,26 @@ nft_verify() {
     name=$(nft_sanitize_name "$base")
     ipv4=$(rule_spec_get "$state_dir" "$base" enable_ipv4 true)
     ipv6=$(rule_spec_get "$state_dir" "$base" enable_ipv6 true)
-    if [[ "$ipv4" == "true" ]] && grep -qv ':' "$entries" 2>/dev/null; then
-      if [[ "$live" != *"set v4_${name} "* && "$live" != *"set v4_${name}"$'\n'* ]]; then
-        log_error "nft verify: set v4_${name} missing"
+    local has4=0 has6=0
+    grep -qv ':' "$entries" 2>/dev/null && has4=1
+    grep -q ':' "$entries" 2>/dev/null && has6=1
+    if { [[ "$ipv4" == "true" && $has4 -eq 1 ]] || [[ "$ipv6" == "true" && $has6 -eq 1 ]]; }; then
+      if [[ "$live" != *"chain al_${name} {"* ]]; then
+        log_error "nft verify: chain al_${name} missing"
         return 1
       fi
     fi
-    if [[ "$ipv6" == "true" ]] && grep -q ':' "$entries" 2>/dev/null; then
-      if [[ "$live" != *"set v6_${name} "* && "$live" != *"set v6_${name}"$'\n'* ]]; then
-        log_error "nft verify: set v6_${name} missing"
-        return 1
-      fi
+    if [[ "$ipv4" == "true" && $has4 -eq 1 ]] && [[ "$live" != *"set al_${name}_v4 {"* ]]; then
+      log_error "nft verify: set al_${name}_v4 missing"
+      return 1
+    fi
+    if [[ "$ipv6" == "true" && $has6 -eq 1 ]] && [[ "$live" != *"set al_${name}_v6 {"* ]]; then
+      log_error "nft verify: set al_${name}_v6 missing"
+      return 1
     fi
   done
   return 0
 }
-
-# ---------------------------------------------------------------------------
-# Snapshot / cleanup / status
-# ---------------------------------------------------------------------------
 
 # Save the current nft table to a file (for rollback/audit).
 nft_snapshot() {
@@ -223,16 +259,19 @@ nft_snapshot() {
   fi
 }
 
-# Remove all ip-allowlist nft objects.
+# Remove all ip-allowlist nft objects (current and legacy table names).
 nft_cleanup() {
   if [[ $DRY_RUN -eq 1 ]]; then
     log_info "nft: dry-run, would delete table $NFT_FAMILY $NFT_TABLE"
     return 0
   fi
-  if nft list table "$NFT_FAMILY" "$NFT_TABLE" >/dev/null 2>&1; then
-    nft delete table "$NFT_FAMILY" "$NFT_TABLE" || log_warn "nft: failed to delete table"
-    log_info "nft: deleted table $NFT_FAMILY $NFT_TABLE"
-  fi
+  local t
+  for t in "$NFT_TABLE" "$NFT_LEGACY_TABLE"; do
+    if nft list table "$NFT_FAMILY" "$t" >/dev/null 2>&1; then
+      nft delete table "$NFT_FAMILY" "$t" || log_warn "nft: failed to delete table $t"
+      log_info "nft: deleted table $NFT_FAMILY $t"
+    fi
+  done
 }
 
 # Report status of the nft table.

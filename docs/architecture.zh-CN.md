@@ -76,22 +76,26 @@ sources.d/*.conf
 
 ## nftables 模型
 
-在配置的 family（默认 `inet`）中，使用单个表（`firewall_chain_name`，默认 `ip-allowlist`）保存：
+使用固定的单表 `inet ip_allowlist`，每个来源包含：
 
-- 每个来源、每个地址族一个区间 set（`v4_<source>`、`v6_<source>`）
-- 一个基础 `input` chain，优先级为 `-1`（早于 Docker 的 `filter` chain，其优先级为 0），用于接受匹配任一来源 set 的流量
+- 每个地址族一个区间 set（`al_<source>_v4`、`al_<source>_v6`）
+- 一个普通 chain `al_<source>`，存放放行规则
+- 基础 `input` chain 中的一条 `jump al_<source>`
+  （`type filter hook input priority filter; policy accept;`）
 
-整个规则集会重新生成，并通过 `nft -f` 原子应用。规则集使用如下写法：
+规则形如 `ip saddr @al_<source>_v4 tcp dport { 443 } accept`；当 `allow_ports=all` 时为 `ip saddr @al_<source>_v4 accept`。
+
+整表重新生成，并通过一次 `nft -f` 原子应用，使用如下幂等写法：
 
 ```
-table inet ip-allowlist {}
-delete table inet ip-allowlist
-table inet ip-allowlist { ... }
+table inet ip_allowlist {}
+delete table inet ip_allowlist
+table inet ip_allowlist { ... }
 ```
 
-无论表是否已存在，这都是幂等的，并保证替换是原子的。使用 `policy accept`，因此该表本身不会丢弃流量。
+`policy accept` 意味着该表本身不会丢包。基础 chain 使用 `filter` 优先级，因此与其他管理器（如 Docker）的相对顺序不保证，详见 README。采用计划命名之前版本创建的表（`inet ip-allowlist`）会被自动清理。
 
-被禁用或从配置中删除的来源，其 `current/<name>.ips` 会被删除，从而在重新生成的规则集中被移除。
+被禁用或从配置中删除的来源，其 `current/<name>.ips` 会被删除，从而在重新生成的表中被移除。
 
 ## ufw 模型
 

@@ -79,27 +79,32 @@ sources.d/*.conf
 
 ## nftables model
 
-A single table (`firewall_chain_name`, default `ip-allowlist`) in the configured
-family (`inet` by default) holds:
+A single fixed table `inet ip_allowlist` holds, per source:
 
-- one interval set per source and address family (`v4_<source>`, `v6_<source>`)
-- one base `input` chain at `priority -1` (before Docker's `filter` chain at
-  priority 0) that accepts traffic matching any source set
+- one interval set per address family (`al_<source>_v4`, `al_<source>_v6`)
+- one regular chain `al_<source>` with the accept rules
+- a `jump al_<source>` entry in the base `input` chain
+  (`type filter hook input priority filter; policy accept;`)
 
-The full ruleset is regenerated and applied atomically with `nft -f`. The
-ruleset uses the idiom:
+Rules look like `ip saddr @al_<source>_v4 tcp dport { 443 } accept`, or
+`ip saddr @al_<source>_v4 accept` when `allow_ports=all`.
+
+The full table is regenerated and applied in one atomic `nft -f` transaction
+using the idempotent idiom:
 
 ```
-table inet ip-allowlist {}
-delete table inet ip-allowlist
-table inet ip-allowlist { ... }
+table inet ip_allowlist {}
+delete table inet ip_allowlist
+table inet ip_allowlist { ... }
 ```
 
-This is idempotent whether or not the table already exists and keeps the swap
-atomic. `policy accept` is used so the table never drops traffic by itself.
+`policy accept` means the table never drops traffic by itself. The base chain
+uses priority `filter`, so ordering relative to other managers (for example
+Docker) is not guaranteed; see the README. Tables created by releases before the
+plan naming (`inet ip-allowlist`) are removed automatically.
 
 Sources that are disabled or removed from config have their `current/<name>.ips`
-file deleted, which removes them from the regenerated ruleset.
+deleted, which removes them from the regenerated table.
 
 ## ufw model
 

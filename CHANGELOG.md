@@ -67,6 +67,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sources.known` lifecycle list and `snapshot_retention`
 - `--source`, `--allow-empty`, `check --offline`, `run` alias
 - `stale` status marker surfaced by `status --check`
+- nftables backend uses the planned `inet ip_allowlist` table with per-source
+  `al_<name>_v4/v6` sets, per-source `al_<name>` chains and a base-chain `jump`;
+  the pre-rename `inet ip-allowlist` table is removed automatically
+- ufw version check (>= 0.34) and firewalld service readiness check
+- boot service rebuilds with `apply-offline` after `nftables.service`, installed
+  only for the nft backend
 
 ## [0.0.0] - 2026-09-18
 

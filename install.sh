@@ -262,9 +262,17 @@ install_config() {
   else
     log "existing config preserved: $CONFIG_DIR/config.conf"
   fi
-  if [[ ! -f "$SOURCES_DIR/cloudflare.conf" && -f "$SRC_DIR/sources.d/cloudflare.conf.example" ]]; then
-    install -m 0640 "$SRC_DIR/sources.d/cloudflare.conf.example" "$SOURCES_DIR/cloudflare.conf"
-    log "installed default source: $SOURCES_DIR/cloudflare.conf"
+  if [[ ! -f "$SOURCES_DIR/cloudflare.conf" ]]; then
+    local tmpl=""
+    if [[ -f "$SRC_DIR/config/sources.d/cloudflare.conf.example" ]]; then
+      tmpl="$SRC_DIR/config/sources.d/cloudflare.conf.example"
+    elif [[ -f "$SRC_DIR/sources.d/cloudflare.conf.example" ]]; then
+      tmpl="$SRC_DIR/sources.d/cloudflare.conf.example"
+    fi
+    if [[ -n "$tmpl" ]]; then
+      install -m 0640 "$tmpl" "$SOURCES_DIR/cloudflare.conf"
+      log "installed default source: $SOURCES_DIR/cloudflare.conf"
+    fi
   fi
 }
 
@@ -311,7 +319,10 @@ install_systemd() {
 
 install_logrotate() {
   [[ -d "$LOGROTATE_DIR" ]] || return 0
-  cat >"$LOGROTATE_DIR/ip-allowlist" <<'EOF'
+  if [[ -f "$SRC_DIR/config/logrotate.d/ip-allowlist" ]]; then
+    install -m 0644 "$SRC_DIR/config/logrotate.d/ip-allowlist" "$LOGROTATE_DIR/ip-allowlist"
+  else
+    cat >"$LOGROTATE_DIR/ip-allowlist" <<'EOF'
 /var/log/ip-allowlist.log {
     weekly
     rotate 8
@@ -321,11 +332,17 @@ install_logrotate() {
     create 0640 root root
 }
 EOF
+  fi
   log "installed logrotate configuration"
 }
 
 install_state_dir() {
   install -d -m 0700 "$STATE_DIR"
+  local version_file="$SRC_DIR/version.txt"
+  local version="0.0.0"
+  [[ -f "$version_file" ]] && version=$(tr -d '[:space:]' <"$version_file")
+  printf '%s\n' "$version" >"$STATE_DIR/version"
+  printf '%s@%s\n' "${REPO:-local}" "$version" >"$STATE_DIR/install-source"
 }
 
 install_log_file() {

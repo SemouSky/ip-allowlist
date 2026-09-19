@@ -60,15 +60,15 @@ ip-allowlist status --check
 ip-allowlist status --json
 ```
 
-Logs can be emitted as JSON with `logging.format=json` for structured
+Logs can be emitted as JSON with `log_format=json` for structured
 collection.
 
 ## Logging
 
-`logging.target`:
+`log_target`:
 - `auto` — stdout when interactive, and the log file when non-interactive
 - `stdout` — stdout/stderr only (systemd journal)
-- `file` — append to `paths.log_file`
+- `file` — append to `log_file`
 - `syslog` — send to syslog via `logger` (tag `ip-allowlist`); falls back to stdout if `logger` is unavailable
 
 Logrotate is installed at `/etc/logrotate.d/ip-allowlist`.
@@ -105,7 +105,7 @@ the next `sync`, even if the fetched source data is unchanged. To apply a
 config change without fetching, run `apply-offline`.
 
 Changing `firewall_backend` triggers a rebuild on the new backend and then
-removes the previous backend's objects. Changing `firewall_firewalld_zone`
+removes the previous backend's objects. Changing `firewalld_zone`
 removes the old zone's rich rules, and changing `fail2ban_ignoreip_file` removes
 the old drop-in file.
 

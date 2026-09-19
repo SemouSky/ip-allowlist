@@ -103,7 +103,7 @@ ufw 没有原生的分组机制，因此每个规范化条目都会安装为一�
 
 ## firewalld 模型
 
-每个来源、每个地址族会创建一个 firewalld ipset（`hash:net`），命名为 `ia-<source>-v4|v6-<hash>`，并由目标 zone（`firewall_firewalld_zone`，默认 firewalld 默认 zone）中的富规则引用：
+每个来源、每个地址族会创建一个 firewalld ipset（`hash:net`），命名为 `ia-<source>-v4|v6-<hash>`，并由目标 zone（`firewalld_zone`，默认 firewalld 默认 zone）中的富规则引用：
 
 ```
 rule family="ipv4" source ipset="ia-<source>-v4-<hash>" accept
@@ -117,7 +117,7 @@ rule family="ipv4" source ipset="ia-<source>-v4-<hash>" accept
 
 当配置的后端与状态中记录的后端不一致时，运行会强制重建，使新后端获得该允许列表，然后清理上一个后端遗留的对象（例如从 nft 切换到 ufw 时删除旧的 nft 表）。firewalld zone 与 fail2ban drop-in 路径也会被记录，因此变更其中任一项时，会清理旧 zone 的富规则或旧的 drop-in 文件。
 
-仅配置变更也会被检测：`desired.hash` 会对后端、表/链/地址族、fail2ban 设置，以及每个来源的条目与规则参数取指纹。因此修改 `allow_ports`、`allow_protocol`、`enable_ipv4/6`、`firewall_chain_name`、`firewall_table_family` 或 `firewall_firewalld_zone` 时，即使来源数据未变，下次 `sync` 也会触发重建。
+仅配置变更也会被检测：`desired.hash` 会对后端、表/链/地址族、fail2ban 设置，以及每个来源的条目与规则参数取指纹。因此修改 `allow_ports`、`allow_protocol`、`enable_ipv4/6`、`firewalld_zone` 时，即使来源数据未变，下次 `sync` 也会触发重建。
 
 ## 崩溃恢复
 

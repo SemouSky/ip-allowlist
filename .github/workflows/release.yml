@@ -70,7 +70,7 @@ jobs:
           mkdir -p dist
           tar -czf "dist/ip-allowlist-${VERSION}.tar.gz" \
             --transform "s|^|ip-allowlist-${VERSION}/|" \
-            ip-allowlist lib install.sh uninstall.sh config config sources.d systemd README.md LICENSE CHANGELOG.md
+            ip-allowlist lib install.sh uninstall.sh config systemd version.txt README.md LICENSE CHANGELOG.md
 
       - name: Create GitHub Release
         if: ${{ !github.event.inputs.dry_run }}

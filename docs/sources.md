@@ -43,11 +43,11 @@ Only `http://` and `https://` URLs are accepted.
 enabled=true
 name=internal
 type=file
-file_path=/etc/ip-allowlist/internal-ranges.txt
+paths=/etc/ip-allowlist/internal-ranges.txt
 min_entries=1
 ```
 
-A relative `file_path` is resolved against the main config directory.
+A relative `paths` is resolved against the main config directory.
 
 ## Rule parameters
 

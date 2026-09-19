@@ -73,6 +73,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ufw version check (>= 0.34) and firewalld service readiness check
 - boot service rebuilds with `apply-offline` after `nftables.service`, installed
   only for the nft backend
+- `status` now reports the desired-state hash, read-only artifact verification,
+  fail2ban status, and the latest known version (`--json` too)
+- log records include a `component` field; `log_target` accepts a comma list and
+  `none`
+- periodic update check (`update_check_interval`, `repo`) surfaced in `status`;
+  `version` shows the install source
+- Makefile targets `test-unit`, `test-integration`, `test-images`, `hooks`
+- repository layout: `config/sources.d/`, `config/logrotate.d/ip-allowlist`,
+  `.github` PR/issue templates and `CODEOWNERS`
 
 ## [0.0.0] - 2026-09-18
 

@@ -37,11 +37,11 @@ max_shrink_ratio=0.5
 enabled=true
 name=internal
 type=file
-file_path=/etc/ip-allowlist/internal-ranges.txt
+paths=/etc/ip-allowlist/internal-ranges.txt
 min_entries=1
 ```
 
-相对的 `file_path` 会相对于主配置目录解析。
+相对的 `paths` 会相对于主配置目录解析。
 
 ## 规则参数
 

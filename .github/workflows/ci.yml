@@ -88,7 +88,7 @@ jobs:
           mkdir -p dist
           tar -czf "dist/ip-allowlist-${{ steps.version.outputs.version }}.tar.gz" \
             --transform "s|^|ip-allowlist-${{ steps.version.outputs.version }}/|" \
-            ip-allowlist lib install.sh uninstall.sh config sources.d systemd version.txt README.md LICENSE CHANGELOG.md
+            ip-allowlist lib install.sh uninstall.sh config systemd version.txt README.md LICENSE CHANGELOG.md
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v1

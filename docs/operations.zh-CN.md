@@ -52,14 +52,14 @@ ip-allowlist status --check
 ip-allowlist status --json
 ```
 
-通过 `logging.format=json` 可输出 JSON 日志，便于结构化采集。
+通过 `log_format=json` 可输出 JSON 日志，便于结构化采集。
 
 ## 日志
 
-`logging.target`：
+`log_target`：
 - `auto` — 交互时输出到 stdout，非交互时写入日志文件
 - `stdout` — 仅输出到 stdout/stderr（systemd journal）
-- `file` — 追加到 `paths.log_file`
+- `file` — 追加到 `log_file`
 - `syslog` — 通过 `logger` 发送到 syslog（tag 为 `ip-allowlist`）；若 `logger` 不可用则回退到 stdout
 
 logrotate 配置安装在 `/etc/logrotate.d/ip-allowlist`。
@@ -84,7 +84,7 @@ logrotate 配置安装在 `/etc/logrotate.d/ip-allowlist`。
 
 规则参数（`allow_ports`、`allow_protocol`、`enable_ipv4`、`enable_ipv6`）以及会影响产物的设置（后端、chain 名、表地址族、firewalld zone）都会参与指纹计算。修改其中任一项，即使获取到的来源数据未变，下次 `sync` 也会触发重建。若不想联网获取，可用 `apply-offline` 直接按当前配置重建。
 
-修改 `firewall_backend` 会在新后端上触发重建，然后清理上一个后端的对象。修改 `firewall_firewalld_zone` 会清理旧 zone 的富规则，修改 `fail2ban_ignoreip_file` 会清理旧的 drop-in 文件。
+修改 `firewall_backend` 会在新后端上触发重建，然后清理上一个后端的对象。修改 `firewalld_zone` 会清理旧 zone 的富规则，修改 `fail2ban_ignoreip_file` 会清理旧的 drop-in 文件。
 
 ## 卸载
 

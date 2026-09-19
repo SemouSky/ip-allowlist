@@ -2,6 +2,7 @@
 # ip-allowlist firewalld backend integration tests.
 # Requires firewalld + dbus and NET_ADMIN; skips when unavailable.
 set -uo pipefail
+export IP_ALLOWLIST_SKIP_UPDATE_CHECK=1
 
 ROOT="$(cd -P "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 CLI="$ROOT/ip-allowlist"

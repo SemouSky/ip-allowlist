@@ -160,6 +160,7 @@ fail2ban_dropin_present() {
 
 # Apply the fail2ban drop-in. If the union is empty, remove the drop-in.
 # Usage: fail2ban_apply <state_dir> <dropin_path>
+  LOG_COMPONENT=fail2ban
 fail2ban_apply() {
   local state_dir="$1" dropin="$2"
 

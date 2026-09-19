@@ -719,6 +719,7 @@ shrink_rejected() {
 # Usage: source_build <array_name> <base_dir> <out_file> <old_file>
 # shellcheck disable=SC2178
 source_build() {
+  LOG_COMPONENT=source
   local -n _sb="$1"
   local base_dir="$2" out_file="$3" old_file="$4"
   local name="${_sb[name]}"

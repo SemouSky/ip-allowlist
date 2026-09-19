@@ -119,7 +119,7 @@ new entries are added and stale entries are deleted. Disabled sources have their
 
 Each source gets one firewalld ipset per address family (`hash:net`) named
 `ia-<source>-v4|v6-<hash>`, referenced by a rich rule in the target zone
-(`firewall_firewalld_zone`, default firewalld's default zone):
+(`firewalld_zone`, default firewalld's default zone):
 
 ```
 rule family="ipv4" source ipset="ia-<source>-v4-<hash>" accept
@@ -147,7 +147,7 @@ drop-in file.
 Config-only changes are detected too: `desired.hash` fingerprints the backend,
 table/chain/family, fail2ban settings and each source's entries plus rule
 parameters, so editing `allow_ports`, `allow_protocol`, `enable_ipv4/6`,
-`firewall_chain_name`, `firewall_table_family` or `firewall_firewalld_zone`
+`firewalld_zone`
 triggers a rebuild on the next `sync` even when source data is unchanged.
 
 ## Crash recovery

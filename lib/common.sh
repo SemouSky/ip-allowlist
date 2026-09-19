@@ -33,6 +33,7 @@ LOG_FILE="${LOG_FILE:-}"
 QUIET=0
 RUN_ID=""
 DRY_RUN=0
+LOG_COMPONENT="${LOG_COMPONENT:-main}"
 
 # Derived log routing (set by log_configure_targets from LOG_TARGET).
 LOG_EMIT_STDOUT=1
@@ -135,10 +136,10 @@ log_at() {
   if [[ "$LOG_FORMAT" == "json" ]]; then
     local escaped
     escaped=$(json_escape "$*")
-    record=$(printf '{"ts":"%s","level":"%s","run_id":"%s","msg":"%s"}' \
-      "$ts" "$level" "$RUN_ID" "$escaped")
+    record=$(printf '{"ts":"%s","level":"%s","component":"%s","run_id":"%s","msg":"%s"}' \
+      "$ts" "$level" "$(json_escape "$LOG_COMPONENT")" "$RUN_ID" "$escaped")
   else
-    record=$(printf '%s [%s] (%s) %s' "$ts" "${level^^}" "$RUN_ID" "$*")
+    record=$(printf '%s [%s] (%s/%s) %s' "$ts" "${level^^}" "$LOG_COMPONENT" "$RUN_ID" "$*")
   fi
 
   if (( LOG_SILENT == 1 )); then

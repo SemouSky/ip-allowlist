@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ip-allowlist integration tests. Run as root inside a container.
 set -uo pipefail
+export IP_ALLOWLIST_SKIP_UPDATE_CHECK=1
 
 ROOT="$(cd -P "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 CLI="$ROOT/ip-allowlist"
@@ -244,6 +245,11 @@ assert_contains "status shows backend" "$(cat "$WS/out7")" "nft"
 "$CLI" --config "$CONF" status --json >"$WS/out8" 2>&1
 assert_contains "status json has version" "$(cat "$WS/out8")" '"version"'
 assert_contains "status json has source" "$(cat "$WS/out8")" '"v4src"'
+assert_contains "status shows verify" "$(cat "$WS/out7")" "verify:"
+assert_contains "status shows fail2ban" "$(cat "$WS/out7")" "fail2ban:"
+assert_contains "status shows desired hash" "$(cat "$WS/out7")" "desired:"
+assert_contains "status json has verify" "$(cat "$WS/out8")" '"verify"'
+assert_contains "status json has latest version" "$(cat "$WS/out8")" '"latest_version"'
 
 "$CLI" --config "$CONF" status --check >"$WS/out9" 2>&1
 assert_eq "status --check OK exit code" "0" "$?"

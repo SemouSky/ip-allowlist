@@ -100,6 +100,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `allow_ports=all`, `firewall_enabled=true`, `fail2ban_enabled=true`,
   `update_interval=7d`
 - documented the `log_target=auto` output chain
+- fixed `uninstall` leaving ufw rules behind: the comment printed by
+  `ufw show added` is quoted, so the delete spec did not match; quotes are now
+  stripped and uninstall reports (and exits non-zero on) leftover objects
 - running `ip-allowlist` with no command now prints help instead of syncing
 - `uninstall` is built into the CLI; the separate uninstall.sh is removed
 - **BREAKING**: config now uses the planned flat keys

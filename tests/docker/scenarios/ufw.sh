@@ -10,6 +10,12 @@ PASS=0
 FAIL=0
 
 pass() { PASS=$(( PASS + 1 )); printf 'ok   - %s\n' "$1"; }
+assert_eq() {
+  local desc="$1" expected="$2" actual="$3"
+  if [[ "$expected" == "$actual" ]]; then pass "$desc"; else
+    fail "$desc (expected '$expected', got '$actual')"
+  fi
+}
 fail() { FAIL=$(( FAIL + 1 )); printf 'FAIL - %s\n' "$1" >&2; }
 
 assert_contains() {
@@ -183,6 +189,26 @@ EOF
 "$CLI" --config "$CONF" cleanup >"$WS/out6" 2>&1
 added="$(ufw show added 2>/dev/null || true)"
 assert_not_contains "ufw cleanup removes rules" "$added" "ip-allowlist:testv4"
+
+# ---------------------------------------------------------------------------
+# 7. uninstall removes managed ufw rules
+# ---------------------------------------------------------------------------
+cat >"$SOURCES/test.conf" <<EOF
+enabled=true
+name=testv4
+type=file
+paths=$WS/v4.txt
+min_entries=1
+EOF
+"$CLI" --config "$CONF" sync >/dev/null 2>&1
+before="$(ufw show added 2>/dev/null | grep -c "ip-allowlist:" || true)"
+if (( before > 0 )); then
+  "$CLI" uninstall --yes >"$WS/uninstall.log" 2>&1 || true
+  after="$(ufw show added 2>/dev/null | grep -c "ip-allowlist:" || true)"
+  assert_eq "uninstall removes managed ufw rules" "0" "$after"
+else
+  fail "uninstall test setup (no managed rules to remove)"
+fi
 
 echo ""
 echo "ufw integration: $PASS passed, $FAIL failed"

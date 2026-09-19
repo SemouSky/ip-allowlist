@@ -1807,16 +1807,22 @@ uninstall_abs_path() {
 }
 
 # Remove ip-allowlist firewall objects from every backend (best effort).
+# Sets UNINSTALL_LEFTOVERS=1 when something could not be removed.
 remove_installed_firewall_objects() {
   local dropin="$1"
-  local t line spec
-  local -a argv=()
+  local t line spec tok
+  local -a argv=() clean=()
 
   if have nft; then
     for t in ip_allowlist ip-allowlist; do
       if nft list table inet "$t" >/dev/null 2>&1; then
         nft delete table inet "$t" 2>/dev/null || true
-        out "removed nftables table inet $t"
+        if nft list table inet "$t" >/dev/null 2>&1; then
+          warn "nftables table inet $t could not be removed"
+          UNINSTALL_LEFTOVERS=1
+        else
+          out "removed nftables table inet $t"
+        fi
       fi
     done
   fi
@@ -1826,9 +1832,22 @@ remove_installed_firewall_objects() {
       [[ "$line" == *"ip-allowlist:"* ]] || continue
       spec="${line#ufw }"
       read -ra argv <<<"$spec"
-      ufw delete "${argv[@]}" >/dev/null 2>&1 || true
+      # ufw prints the comment quoted; strip the surrounding quotes so the
+      # delete spec matches the stored rule.
+      clean=()
+      for tok in "${argv[@]}"; do
+        tok="${tok#\'}"
+        tok="${tok%\'}"
+        clean+=("$tok")
+      done
+      ufw delete "${clean[@]}" >/dev/null 2>&1 || true
     done < <(ufw show added 2>/dev/null)
-    out "removed ufw ip-allowlist rules"
+    if ufw show added 2>/dev/null | grep -Fq "ip-allowlist:"; then
+      warn "some ufw ip-allowlist rules could not be removed"
+      UNINSTALL_LEFTOVERS=1
+    else
+      out "removed ufw ip-allowlist rules"
+    fi
   fi
 
   if have firewall-cmd && firewall-cmd --state >/dev/null 2>&1; then
@@ -1844,7 +1863,12 @@ remove_installed_firewall_objects() {
       firewall-cmd --permanent --delete-ipset="$s" >/dev/null 2>&1 || true
     done < <(firewall-cmd --permanent --get-ipsets 2>/dev/null | tr ' ' '\n')
     firewall-cmd --reload >/dev/null 2>&1 || true
-    out "removed firewalld ip-allowlist ipsets and rich rules"
+    if firewall-cmd --permanent --get-ipsets 2>/dev/null | tr ' ' '\n' | grep -q '^ia-'; then
+      warn "some firewalld ip-allowlist ipsets could not be removed"
+      UNINSTALL_LEFTOVERS=1
+    else
+      out "removed firewalld ip-allowlist ipsets and rich rules"
+    fi
   fi
 
   if [[ -n "$dropin" && -f "$dropin" ]]; then
@@ -1876,6 +1900,7 @@ remove_installed_systemd() {
 
 cmd_uninstall() {
   [[ "$(id -u)" -eq 0 ]] || die "must be run as root (re-run with sudo)"
+  UNINSTALL_LEFTOVERS=0
 
   local purge="${PURGE:-0}"
   if (( ASSUME_YES == 0 )); then
@@ -1928,6 +1953,10 @@ cmd_uninstall() {
     out "purged config, state and logs"
   else
     out "config and state preserved (use --purge to remove)"
+  fi
+  if (( UNINSTALL_LEFTOVERS == 1 )); then
+    err "uninstall finished, but some ip-allowlist firewall objects remain (see warnings above)"
+    return 2
   fi
   out "uninstall complete"
 }

@@ -105,6 +105,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names on one line)
 
 ### Changed
+- documented the `firewall_enabled` / `fail2ban_enabled` switch logic in the
+  example configs and docs (master switches, per-source AND, inheritance,
+  no-op semantics)
 - the installer preselects `firewall_backend` from a running ufw/firewalld,
   then one that is enabled, otherwise nft, and warns when the selection is not
   running

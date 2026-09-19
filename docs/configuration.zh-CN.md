@@ -15,7 +15,24 @@
 | `firewall_backend` | `nft`\|`ufw`\|`firewalld` | 必填* | 后端（`firewall_enabled=true` 时必填）；安装器会优先选择正在运行的 ufw/firewalld，其次是已启用的，否则 nft（若所选后端未在运行会给出告警） |
 | `allow_conflicting_firewall` | 布尔 | `false` | 有其他管理器活跃时仍继续 |
 
-`firewall_enabled=false` / `fail2ban_enabled=false` 表示该目标为 no-op：不下发，也**不清理**既有产物（需清理请用 `uninstall`）。
+### 目标开关的作用逻辑
+
+`firewall_enabled` 与 `fail2ban_enabled` 是**总开关**，二者本身都不会清理任何产物：
+
+| 主开关 | 作用 |
+|---|---|
+| `firewall_enabled=true` | 将允许列表下发到 `firewall_backend`。只有 `enabled=true` **且** 来源级 `firewall_enabled=true` 的来源会被下发。 |
+| `firewall_enabled=false` | 防火墙目标为 no-op：不下发，且**保留**既有 ip-allowlist 防火墙对象。如需清理用 `ip-allowlist cleanup`（或 `uninstall`）。此时 `firewall_backend` 可省略。 |
+| `fail2ban_enabled=true` | 用“来源级 `fail2ban_enabled=true` 的来源并集”管理 `fail2ban_ignoreip_file` 中的 `[DEFAULT] ignoreip`；当 `fail2ban_merge_existing=true` 时并入用户自身的 `ignoreip`。 |
+| `fail2ban_enabled=false` | fail2ban 目标为 no-op：**保留**既有 drop-in。如需清理用 `ip-allowlist cleanup`。 |
+
+来源级开关与主开关是**逻辑与**，且来源省略该键时**继承主配置的值**：
+
+- 来源 `firewall_enabled=false`：该来源被排除在防火墙之外（若之前已应用则移除其对象），但其条目仍会被获取与缓存，供 fail2ban 并集使用。
+- 来源 `fail2ban_enabled=false`：该来源被排除在 ignoreip 并集之外，但仍可下发到防火墙。
+- 两个开关都参与来源的有效哈希，改动后下次 `sync` 会重建该来源。
+
+若两个目标都被关闭，或所选后端工具缺失/未运行且 fail2ban 不可用，`sync` 为 no-op 并以 0 退出。
 
 ### 来源
 

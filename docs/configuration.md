@@ -19,8 +19,31 @@ and must not contain spaces.
 | `firewall_backend` | `nft`\|`ufw`\|`firewalld` | required* | Backend (required when `firewall_enabled=true`); the installer preselects a running ufw/firewalld, then one that is enabled, otherwise nft (and warns if the selected backend is not running) |
 | `allow_conflicting_firewall` | boolean | `false` | Proceed even if another manager is active |
 
-`firewall_enabled=false` / `fail2ban_enabled=false` make that target a no-op: it
-is not applied and existing objects are **not** removed (use `uninstall`).
+### How the target switches work
+
+`firewall_enabled` and `fail2ban_enabled` are **master switches**. Neither one
+removes anything by itself:
+
+| Main switch | Effect |
+|---|---|
+| `firewall_enabled=true` | Apply the allow-list to `firewall_backend`. Only sources that are `enabled=true` **and** have `firewall_enabled=true` are applied. |
+| `firewall_enabled=false` | The firewall target is a no-op: nothing is applied and existing ip-allowlist firewall objects are left in place. Remove them with `ip-allowlist cleanup` (or `uninstall`). `firewall_backend` may be omitted. |
+| `fail2ban_enabled=true` | Manage `[DEFAULT] ignoreip` in `fail2ban_ignoreip_file` with the canonical union of the sources whose `fail2ban_enabled` is true, merged with the user's own `ignoreip` entries when `fail2ban_merge_existing=true`. |
+| `fail2ban_enabled=false` | The fail2ban target is a no-op: the existing drop-in is left untouched. Remove it with `ip-allowlist cleanup`. |
+
+The per-source switches are combined with the main switch using **logical AND**,
+and a source that omits them **inherits the main value**:
+
+- `firewall_enabled=false` on a source excludes it from the firewall (its
+  objects are removed if it had been applied) while its ranges are still fetched
+  and cached for the fail2ban union.
+- `fail2ban_enabled=false` on a source excludes it from the ignoreip union while
+  it can still be applied to the firewall.
+- Both switches participate in the source's effective hash, so changing one
+  triggers a rebuild on the next `sync`.
+
+If both targets end up disabled, or the selected backend tool is missing/not
+running and fail2ban is unavailable, `sync` is a no-op and exits 0.
 
 ### Sources
 

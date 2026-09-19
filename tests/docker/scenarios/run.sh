@@ -699,6 +699,61 @@ assert_contains "help uninstall documents --purge" "$h_uninstall" "--purge"
 assert_not_contains "help uninstall is real help" "$h_uninstall" "Delegates"
 
 # ---------------------------------------------------------------------------
+# 10i. per-source target switches (firewall_enabled / fail2ban_enabled)
+# ---------------------------------------------------------------------------
+TS="$WS/targets"
+mkdir -p "$TS/sources.d" "$TS/f2b"
+printf '1.2.3.0/24\n' >"$TS/a.txt"
+printf '9.9.9.0/24\n' >"$TS/b.txt"
+cat >"$TS/sources.d/a.conf" <<EOF
+name=a
+enabled=true
+type=file
+paths=$TS/a.txt
+min_entries=1
+allow_ports=all
+firewall_enabled=true
+fail2ban_enabled=true
+EOF
+cat >"$TS/sources.d/b.conf" <<EOF
+name=b
+enabled=true
+type=file
+paths=$TS/b.txt
+min_entries=1
+allow_ports=all
+firewall_enabled=false
+fail2ban_enabled=false
+EOF
+cat >"$TS/config.conf" <<EOF
+firewall_backend=nft
+allow_ports=all
+fail2ban_enabled=true
+fail2ban_ignoreip_file=$TS/f2b/dropin.conf
+state_dir=$TS/state
+sources_dir=$TS/sources.d
+log_target=stdout
+update_interval=0
+EOF
+FAIL2BAN_JAIL_CONF="$TS/none" FAIL2BAN_JAIL_LOCAL="$TS/none" FAIL2BAN_JAIL_D="$TS/nodir" FAIL2BAN_RELOAD=false \
+  "$CLI" --config "$TS/config.conf" sync >"$TS/out" 2>&1
+rules="$(nft list table inet ip_allowlist 2>/dev/null || true)"
+dropin="$(cat "$TS/f2b/dropin.conf" 2>/dev/null || true)"
+assert_contains "firewall-enabled source is applied" "$rules" "1.2.3.0/24"
+assert_not_contains "firewall-disabled source is skipped" "$rules" "9.9.9.0/24"
+assert_contains "fail2ban-enabled source is in the union" "$dropin" "1.2.3.0/24"
+assert_not_contains "fail2ban-disabled source is not in the union" "$dropin" "9.9.9.0/24"
+
+sed -i 's/firewall_enabled=true/firewall_enabled=false/' "$TS/sources.d/a.conf"
+FAIL2BAN_JAIL_CONF="$TS/none" FAIL2BAN_JAIL_LOCAL="$TS/none" FAIL2BAN_JAIL_D="$TS/nodir" FAIL2BAN_RELOAD=false \
+  "$CLI" --config "$TS/config.conf" sync >"$TS/out2" 2>&1
+rules="$(nft list table inet ip_allowlist 2>/dev/null || true)"
+dropin="$(cat "$TS/f2b/dropin.conf" 2>/dev/null || true)"
+assert_not_contains "disabling the firewall target removes the source" "$rules" "1.2.3.0/24"
+assert_contains "fail2ban union keeps the source" "$dropin" "1.2.3.0/24"
+"$CLI" --config "$TS/config.conf" cleanup >/dev/null 2>&1
+
+# ---------------------------------------------------------------------------
 # 11. install/uninstall smoke test
 # ---------------------------------------------------------------------------
 if [[ -x "$ROOT/install.sh" ]]; then

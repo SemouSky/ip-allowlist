@@ -135,6 +135,7 @@ nft_generate_ruleset() {
     for entries in "$state_dir"/current/*.ips; do
       [[ -e "$entries" ]] || continue
       base=$(basename -- "$entries" .ips)
+      rule_spec_bool "$state_dir" "$base" firewall true || continue
       name=$(nft_sanitize_name "$base")
       read -r ports _ ipv4 ipv6 protocols <<<"$(nft_source_params "$state_dir" "$base")"
 
@@ -171,6 +172,7 @@ nft_generate_ruleset() {
     for entries in "$state_dir"/current/*.ips; do
       [[ -e "$entries" ]] || continue
       base=$(basename -- "$entries" .ips)
+      rule_spec_bool "$state_dir" "$base" firewall true || continue
       name=$(nft_sanitize_name "$base")
       read -r _ _ ipv4 ipv6 _ <<<"$(nft_source_params "$state_dir" "$base")"
       local has4=0 has6=0
@@ -187,6 +189,7 @@ nft_generate_ruleset() {
       for entries in "$state_dir"/current/*.ips; do
         [[ -e "$entries" ]] || continue
         base=$(basename -- "$entries" .ips)
+        rule_spec_bool "$state_dir" "$base" firewall true || continue
         name=$(nft_sanitize_name "$base")
         read -r _ _ ipv4 ipv6 _ <<<"$(nft_source_params "$state_dir" "$base")"
         local j4=0 j6=0
@@ -325,12 +328,17 @@ nft_apply() {
         for n in "${changed[@]}"; do
           [[ -n "$n" ]] || continue
           [[ -f "$state_dir/current/${n}.ips" ]] || continue
-          nft_emit_source_batch "$state_dir" "$n"
+          if rule_spec_bool "$state_dir" "$n" firewall true; then
+            nft_emit_source_batch "$state_dir" "$n"
+          else
+            nft_emit_remove_batch "$n"
+          fi
         done
         # Ensure every applied source has its jump rule in the base chain.
         for n in "${changed[@]}"; do
           [[ -n "$n" ]] || continue
           [[ -f "$state_dir/current/${n}.ips" ]] || continue
+          rule_spec_bool "$state_dir" "$n" firewall true || continue
           local cname
           cname=$(nft_sanitize_name "$n")
           if [[ -z "$(nft_jump_handle "al_${cname}")" ]]; then
@@ -370,6 +378,7 @@ nft_verify() {
   for entries in "$state_dir"/current/*.ips; do
     [[ -e "$entries" ]] || continue
     base=$(basename -- "$entries" .ips)
+    rule_spec_bool "$state_dir" "$base" firewall true || continue
     name=$(nft_sanitize_name "$base")
     read -r _ _ ipv4 ipv6 _ <<<"$(nft_source_params "$state_dir" "$base")"
     local has4=0 has6=0

@@ -100,6 +100,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `allow_ports=all`, `firewall_enabled=true`, `fail2ban_enabled=true`,
   `update_interval=7d`
 - documented the `log_target=auto` output chain
+- per-source `firewall_enabled` / `fail2ban_enabled` are now honoured (AND
+  with the main switches): firewall-disabled sources are excluded from the
+  firewall (and removed if previously applied), fail2ban-disabled sources are
+  excluded from the ignoreip union. Both are part of the change hash, so
+  flipping them triggers a rebuild.
 - fixed `--dry-run` actually applying changes: `lib/common.sh` unconditionally
   reset `DRY_RUN`/`QUIET` after the argument parser had set them
 - fixed `--verbose`/`--quiet` aborting with "LOG_LEVEL_DEBUG: unbound variable"

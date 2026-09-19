@@ -389,8 +389,6 @@ DEFAULT_HTTP_RETRIES=3
 DEFAULT_USER_AGENT="ip-allowlist"
 DEFAULT_MIN_ENTRIES=""
 DEFAULT_MAX_SHRINK_RATIO="0.5"
-DEFAULT_FIREWALL_ENABLED="true"
-DEFAULT_FAIL2BAN_ENABLED="false"
 
 locate_config() {
   if [[ -n "$CONFIG_FILE" ]]; then
@@ -839,11 +837,11 @@ load_sources() {
     s[ipv6_required]=$(normalize_bool "${s[ipv6_required]}")
     case "${s[ipv6_required]}" in true|false) ;; *) die "source $f: invalid ipv6_required" ;; esac
 
-    if [[ -z "${s[firewall_enabled]:-}" ]]; then s[firewall_enabled]="$DEFAULT_FIREWALL_ENABLED"; fi
+    if [[ -z "${s[firewall_enabled]:-}" ]]; then s[firewall_enabled]="$FIREWALL_ENABLED"; fi
     s[firewall_enabled]=$(normalize_bool "${s[firewall_enabled]}")
     case "${s[firewall_enabled]}" in true|false) ;; *) die "source $f: invalid firewall_enabled" ;; esac
 
-    if [[ -z "${s[fail2ban_enabled]:-}" ]]; then s[fail2ban_enabled]="$DEFAULT_FAIL2BAN_ENABLED"; fi
+    if [[ -z "${s[fail2ban_enabled]:-}" ]]; then s[fail2ban_enabled]="$FAIL2BAN_ENABLED"; fi
     s[fail2ban_enabled]=$(normalize_bool "${s[fail2ban_enabled]}")
     case "${s[fail2ban_enabled]}" in true|false) ;; *) die "source $f: invalid fail2ban_enabled" ;; esac
 
@@ -1153,10 +1151,9 @@ cmd_sync() {
     state_mark_run "$name"
     state_clear_stale "$name"
     state_write_rule_spec "$name" "${src[allow_ports]}" "${src[allow_protocol]}" \
-      "${src[enable_ipv4]}" "${src[enable_ipv6]}"
+      "${src[enable_ipv4]}" "${src[enable_ipv6]}" "${src[firewall_enabled]}" "${src[fail2ban_enabled]}"
 
-    new_hash=$(source_effective_hash "$STATE_DIR" "$name" "${src[allow_ports]}" \
-      "${src[allow_protocol]}" "${src[enable_ipv4]}" "${src[enable_ipv6]}")
+    new_hash=$(source_effective_hash "$STATE_DIR" "$name")
     old_hash=$(state_get_applied_hash "$name")
 
     if [[ "$new_hash" != "$old_hash" ]]; then
@@ -1222,7 +1219,7 @@ cmd_sync() {
   # Global desired-state fingerprint: backend/table/zone plus every source's
   # entries and rule parameters. Catches config-only changes (chain name,
   # table family, zone, allow_ports, ...) that do not alter source data.
-  local fp_tmp new_fp old_fp fpname fp_ports fp_protocol
+  local fp_tmp new_fp old_fp fpname
   fp_tmp=$(tmpfile "fingerprint")
   {
     printf 'backend=%s\n' "$BACKEND"
@@ -1231,12 +1228,8 @@ cmd_sync() {
     printf 'fail2ban_file=%s\n' "$FAIL2BAN_DROPIN"
     for fpname in "${SOURCE_NAMES[@]}"; do
       [[ -f "$STATE_DIR/current/${fpname}.ips" ]] || continue
-      fp_ports=$(rule_spec_get "$STATE_DIR" "$fpname" allow_ports any)
-      fp_protocol=$(rule_spec_get "$STATE_DIR" "$fpname" allow_protocol any)
       printf 'src=%s hash=%s\n' "$fpname" \
-        "$(source_effective_hash "$STATE_DIR" "$fpname" "$fp_ports" "$fp_protocol" \
-          "$(rule_spec_get "$STATE_DIR" "$fpname" enable_ipv4 true)" \
-          "$(rule_spec_get "$STATE_DIR" "$fpname" enable_ipv6 true)")"
+        "$(source_effective_hash "$STATE_DIR" "$fpname")"
     done
   } >"$fp_tmp"
   new_fp=$(hash_file "$fp_tmp")
@@ -1300,11 +1293,7 @@ cmd_sync() {
 
     for name in "${changed_names[@]}"; do
       if [[ -f "$STATE_DIR/current/${name}.ips" ]]; then
-        local cref
-        cref=$(source_ref "$name")
-        local -n csrc="$cref"
-        state_set_applied_hash "$name" "$(source_effective_hash "$STATE_DIR" "$name" \
-          "${csrc[allow_ports]}" "${csrc[allow_protocol]}" "${csrc[enable_ipv4]}" "${csrc[enable_ipv6]}")"
+        state_set_applied_hash "$name" "$(source_effective_hash "$STATE_DIR" "$name")"
       fi
     done
     for name in "${SOURCE_NAMES[@]}"; do
@@ -1412,8 +1401,9 @@ cmd_check() {
     ehash_tmp=$(tmpfile "check-hash-${name}")
     {
       cat -- "$canonical"
-      printf 'ports=%s\nprotocol=%s\nipv4=%s\nipv6=%s\n' \
-        "${src[allow_ports]}" "${src[allow_protocol]}" "${src[enable_ipv4]}" "${src[enable_ipv6]}"
+      printf 'ports=%s\nprotocol=%s\nipv4=%s\nipv6=%s\nfirewall=%s\nfail2ban=%s\n' \
+        "${src[allow_ports]}" "${src[allow_protocol]}" "${src[enable_ipv4]}" "${src[enable_ipv6]}" \
+        "${src[firewall_enabled]}" "${src[fail2ban_enabled]}"
     } >"$ehash_tmp"
     new_hash=$(hash_file "$ehash_tmp")
     old_hash=$(state_get_applied_hash "$name")
@@ -1660,8 +1650,7 @@ cmd_status() {
       elif state_is_stale "$name"; then sstatus="stale"; fi
       local desired=""
       if [[ "${src[enabled]}" == "true" && -f "$current" ]]; then
-        desired=$(source_effective_hash "$STATE_DIR" "$name" "${src[allow_ports]}" \
-          "${src[allow_protocol]}" "${src[enable_ipv4]}" "${src[enable_ipv6]}")
+        desired=$(source_effective_hash "$STATE_DIR" "$name")
       fi
       (( first == 1 )) || printf ','
       first=0

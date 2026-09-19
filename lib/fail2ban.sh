@@ -129,10 +129,12 @@ fail2ban_build_union() {
 
   : >"$combined"
 
-  # Current canonical entries from every source.
-  local f
+  # Current canonical entries from every source whose fail2ban switch is on.
+  local f base
   for f in "$state_dir"/current/*.ips; do
     [[ -e "$f" ]] || continue
+    base=$(basename -- "$f" .ips)
+    rule_spec_bool "$state_dir" "$base" fail2ban true || continue
     cat -- "$f" >>"$combined"
   done
 

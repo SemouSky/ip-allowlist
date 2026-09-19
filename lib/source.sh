@@ -354,17 +354,28 @@ rule_spec_get() {
   printf '%s' "$def"
 }
 
-# Hash a source's entries together with its effective rule parameters, so that
-# changing allow_ports/allow_protocol/enable_ipv4/enable_ipv6 is treated as a
-# change even when the fetched data is identical.
-# Usage: source_effective_hash <state_dir> <name> <ports> <protocol> <ipv4> <ipv6>
+# Return 0 when a boolean rule-spec key is "true".
+# Usage: rule_spec_bool <state_dir> <name> <key> <default>
+rule_spec_bool() {
+  [[ "$(rule_spec_get "$1" "$2" "$3" "$4")" == "true" ]]
+}
+
+# Hash a source's entries together with its effective rule parameters (read from
+# the sidecar), so changing ports/protocol/families or the per-source target
+# switches is treated as a change even when the fetched data is identical.
+# Usage: source_effective_hash <state_dir> <name>
 source_effective_hash() {
-  local sd="$1" name="$2" ports="$3" protocol="$4" ipv4="$5" ipv6="$6"
-  local tmp
+  local sd="$1" name="$2" tmp
   tmp=$(tmpfile "effhash-${name}")
   {
     cat -- "$sd/current/${name}.ips" 2>/dev/null || true
-    printf 'ports=%s\nprotocol=%s\nipv4=%s\nipv6=%s\n' "$ports" "$protocol" "$ipv4" "$ipv6"
+    printf 'ports=%s\nprotocol=%s\nipv4=%s\nipv6=%s\nfirewall=%s\nfail2ban=%s\n' \
+      "$(rule_spec_get "$sd" "$name" allow_ports any)" \
+      "$(rule_spec_get "$sd" "$name" allow_protocol any)" \
+      "$(rule_spec_get "$sd" "$name" enable_ipv4 true)" \
+      "$(rule_spec_get "$sd" "$name" enable_ipv6 true)" \
+      "$(rule_spec_get "$sd" "$name" firewall true)" \
+      "$(rule_spec_get "$sd" "$name" fail2ban true)"
   } >"$tmp"
   hash_file "$tmp"
 }

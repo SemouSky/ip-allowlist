@@ -118,9 +118,10 @@ state_remove_source() {
 }
 
 # Persist the effective firewall rule parameters for a source.
-# Usage: state_write_rule_spec <name> <ports> <protocol> <ipv4> <ipv6>
+# Usage: state_write_rule_spec <name> <ports> <protocol> <ipv4> <ipv6> <firewall> <fail2ban>
 state_write_rule_spec() {
   local name="$1" ports="$2" protocol="$3" ipv4="$4" ipv6="$5"
+  local firewall="${6:-true}" fail2ban="${7:-true}"
   local dir
   dir=$(state_path "rules")
   mkdir -p -- "$dir"
@@ -131,6 +132,8 @@ state_write_rule_spec() {
     printf 'allow_protocol=%s\n' "$protocol"
     printf 'enable_ipv4=%s\n' "$ipv4"
     printf 'enable_ipv6=%s\n' "$ipv6"
+    printf 'firewall=%s\n' "$firewall"
+    printf 'fail2ban=%s\n' "$fail2ban"
   } >"$tmp"
   atomic_install "$tmp" "$dir/${name}.conf" "0600"
 }

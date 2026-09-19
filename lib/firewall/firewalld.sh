@@ -222,6 +222,7 @@ firewalld_apply() {
   for f in "$state_dir"/current/*.ips; do
     [[ -e "$f" ]] || continue
     base=$(basename -- "$f" .ips)
+    rule_spec_bool "$state_dir" "$base" firewall true || continue
     ports=$(rule_spec_get "$state_dir" "$base" allow_ports any)
     protocol=$(rule_spec_get "$state_dir" "$base" allow_protocol any)
     ipv4=$(rule_spec_get "$state_dir" "$base" enable_ipv4 true)
@@ -284,6 +285,7 @@ firewalld_verify() {
   for f in "$state_dir"/current/*.ips; do
     [[ -e "$f" ]] || continue
     base=$(basename -- "$f" .ips)
+    rule_spec_bool "$state_dir" "$base" firewall true || continue
     for fam in v4 v6; do
       entries=$(tmpfile "fw-verify-${base}-${fam}")
       if [[ "$fam" == "v4" ]]; then
@@ -327,6 +329,7 @@ firewalld_verify_orphans() {
   for f in "$state_dir"/current/*.ips; do
     [[ -e "$f" ]] || continue
     base=$(basename -- "$f" .ips)
+    rule_spec_bool "$state_dir" "$base" firewall true || continue
     for fam in v4 v6; do
       entries=$(tmpfile "fw-orph-${base}-${fam}")
       if [[ "$fam" == "v4" ]]; then

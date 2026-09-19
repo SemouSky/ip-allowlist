@@ -37,7 +37,7 @@ systemctl status ip-allowlist.service
 journalctl -u ip-allowlist.service -f
 ```
 
-启动 service 仅在 `/etc/ip-allowlist/update-on-boot` 存在时运行，该文件由安装程序根据 `update_on_boot` 创建。它执行 `sync --force`，因此开机时会获取所有来源。
+启动 service 仅在 `nft` 后端且 `/etc/ip-allowlist/update-on-boot` 存在时运行（由安装程序创建）。它执行 `apply-offline`，在 `nftables.service` 之后用缓存状态重建表。
 
 ## 监控
 
@@ -60,7 +60,10 @@ ip-allowlist status --json
 - `auto` — 交互时输出到 stdout，非交互时写入日志文件
 - `stdout` — 仅输出到 stdout/stderr（systemd journal）
 - `file` — 追加到 `log_file`
-- `syslog` — 通过 `logger` 发送到 syslog（tag 为 `ip-allowlist`）；若 `logger` 不可用则回退到 stdout
+- `syslog` — 通过 `logger` 发送到 syslog（tag 为 `ip-allowlist`）
+- `none` — 不输出日志
+
+`log_target` 支持逗号分隔的列表（如 `stdout,file`）；含 `file` 时必须设置 `log_file`。日志记录包含 `component` 字段（config/source/firewall/fail2ban/upgrade）。
 
 logrotate 配置安装在 `/etc/logrotate.d/ip-allowlist`。
 

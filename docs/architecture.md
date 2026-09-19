@@ -152,10 +152,11 @@ triggers a rebuild on the next `sync` even when source data is unchanged.
 
 ## Crash recovery
 
-A run creates `state/in-progress` before processing and removes it on success.
-If the next run finds a stale marker it logs a warning and re-applies the last
-known-good `current/` state, which is idempotent. Per-source snapshots allow
-manual rollback.
+A run creates `state/in-progress` (with a start timestamp) before processing
+and removes it on success. If the next run finds a stale marker, it rolls every
+source back to the snapshot taken during that interrupted run (snapshot mtime at
+or after the marker's start), then continues normally. Per-source snapshots also
+allow manual rollback.
 
 ## Failure handling
 

@@ -626,6 +626,51 @@ assert_not_contains "merge_existing=false drops user ip" "$dropin" "10.9.9.9"
 nft delete table inet ip_allowlist 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
+# 10g. crash recovery: in-progress marker rolls back to the pre-run snapshot
+# ---------------------------------------------------------------------------
+CR="$WS/crash"
+mkdir -p "$CR/sources.d"
+printf '1.2.3.0/24\n' >"$CR/v.txt"
+cat >"$CR/sources.d/c.conf" <<EOF
+enabled=true
+name=c
+type=file
+paths=$CR/v.txt
+min_entries=1
+EOF
+cat >"$CR/config.conf" <<EOF
+firewall_backend=nft
+allow_ports=all
+fail2ban_enabled=false
+state_dir=$CR/state
+sources_dir=$CR/sources.d
+log_target=stdout
+update_interval=0
+EOF
+"$CLI" --config "$CR/config.conf" sync >/dev/null 2>&1
+# Simulate an interrupted run: marker plus a snapshot taken during that run.
+mkdir -p "$CR/state/snapshots/c"
+printf 'started=%s\n' "$(date +%s)" >"$CR/state/in-progress"
+cp "$CR/state/current/c.ips" "$CR/state/snapshots/c/run.ips"
+# Corrupt the live values as if the interrupted run had partially written them.
+printf '9.9.9.9\n' >"$CR/state/current/c.ips"
+cat >"$CR/sources.d/c.conf" <<EOF
+enabled=false
+name=c
+type=file
+paths=$CR/v.txt
+min_entries=1
+EOF
+"$CLI" --config "$CR/config.conf" sync --allow-empty >"$CR/out" 2>&1
+assert_contains "crash recovery rolls back to the pre-run snapshot" "$(cat "$CR/out")" "restored the snapshot taken before the interrupted run"
+if [[ -f "$CR/state/in-progress" ]]; then
+  fail "crash recovery clears the in-progress marker"
+else
+  pass "crash recovery clears the in-progress marker"
+fi
+"$CLI" --config "$CR/config.conf" cleanup >/dev/null 2>&1
+
+# ---------------------------------------------------------------------------
 # 11. install/uninstall smoke test
 # ---------------------------------------------------------------------------
 if [[ -x "$ROOT/install.sh" ]]; then

@@ -43,9 +43,9 @@ systemctl status ip-allowlist.service
 journalctl -u ip-allowlist.service -f
 ```
 
-The boot service only runs when `/etc/ip-allowlist/update-on-boot` exists, which
-the installer creates based on `update_on_boot`. It runs `sync --force` so every
-source is fetched at boot.
+The boot service only runs for the `nft` backend when
+`/etc/ip-allowlist/update-on-boot` exists (created by the installer). It runs
+`apply-offline` after `nftables.service` to rebuild the table from cached state.
 
 ## Monitoring
 
@@ -69,7 +69,12 @@ collection.
 - `auto` — stdout when interactive, and the log file when non-interactive
 - `stdout` — stdout/stderr only (systemd journal)
 - `file` — append to `log_file`
-- `syslog` — send to syslog via `logger` (tag `ip-allowlist`); falls back to stdout if `logger` is unavailable
+- `syslog` — send to syslog via `logger` (tag `ip-allowlist`)
+- `none` — no log output
+
+`log_target` accepts a comma separated list (for example `stdout,file`); `file`
+additionally requires `log_file`. Records include a `component` field
+(config/source/firewall/fail2ban/upgrade).
 
 Logrotate is installed at `/etc/logrotate.d/ip-allowlist`.
 

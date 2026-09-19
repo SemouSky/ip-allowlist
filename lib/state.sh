@@ -52,6 +52,40 @@ state_in_progress() {
   [[ -f "$(state_path "in-progress")" ]]
 }
 
+# Epoch recorded when the interrupted run started (0 when unavailable).
+state_in_progress_started() {
+  local marker line
+  marker=$(state_path "in-progress")
+  [[ -f "$marker" ]] || { printf '0'; return 0; }
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == started=* ]]; then
+      printf '%s' "${line#started=}"
+      return 0
+    fi
+  done <"$marker"
+  printf '0'
+}
+
+# Restore the newest snapshot for a source taken at or after <since>.
+# Returns non-zero when no such snapshot exists.
+# Usage: state_restore_snapshot_since <name> <since_epoch>
+state_restore_snapshot_since() {
+  local name="$1" since="$2"
+  local dir="$STATE_DIR/snapshots/${name}"
+  [[ -d "$dir" ]] || return 1
+  local f best="" best_m=0 m
+  for f in "$dir"/*.ips; do
+    [[ -e "$f" ]] || continue
+    m=$(stat -c %Y -- "$f" 2>/dev/null || stat -f %m -- "$f" 2>/dev/null || echo 0)
+    if (( m >= since && m >= best_m )); then
+      best="$f"
+      best_m=$m
+    fi
+  done
+  [[ -n "$best" ]] || return 1
+  atomic_install "$best" "$STATE_DIR/current/${name}.ips" "0644"
+}
+
 # ---------------------------------------------------------------------------
 # Applied hash tracking
 # ---------------------------------------------------------------------------

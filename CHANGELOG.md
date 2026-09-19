@@ -82,6 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Makefile targets `test-unit`, `test-integration`, `test-images`, `hooks`
 - repository layout: `config/sources.d/`, `config/logrotate.d/ip-allowlist`,
   `.github` PR/issue templates and `CODEOWNERS`
+- `auto_update=true` now installs the newer release and re-executes the run
+- crash recovery rolls sources back to the snapshot taken during the interrupted
+  run, using the in-progress marker start time
 
 ## [0.0.0] - 2026-09-18
 

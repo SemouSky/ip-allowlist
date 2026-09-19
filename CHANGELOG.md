@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0](https://github.com/SemouSky/ip-allowlist/compare/v0.1.1...v0.2.0) (2026-09-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* adopt the planned flat config schema
+
+### Features
+
+* adopt the planned flat config schema ([abb74a2](https://github.com/SemouSky/ip-allowlist/commit/abb74a21a873987c1b26faf836f771806f4ae031))
+* auto_update execution and pre-run crash recovery ([acf8fbc](https://github.com/SemouSky/ip-allowlist/commit/acf8fbc6d715105b3dc129ff4b8d9417b54f9938))
+* **cli:** per-command help and upgrade --sync ([df0fc08](https://github.com/SemouSky/ip-allowlist/commit/df0fc0851058275bb4425e61be40f13e1f6eabb3))
+* **cli:** richer status, log components and planned repo layout ([a3313fa](https://github.com/SemouSky/ip-allowlist/commit/a3313fa7ce535b07499ddb257cca26698a5834ab))
+* **config:** add allow_ports, allow_protocol and family switches ([35f4500](https://github.com/SemouSky/ip-allowlist/commit/35f4500bb03ef05567da1327dbe25d11c48da771))
+* **firewall:** adopt the planned nft model and readiness checks ([d162efd](https://github.com/SemouSky/ip-allowlist/commit/d162efda67e71f74973be55be0d5b0ade429914e))
+* **firewall:** file-level rollback and exact firewalld rules ([31d546b](https://github.com/SemouSky/ip-allowlist/commit/31d546b574ee0c68fea58e502b9ba2cf765384df))
+* **nft:** apply source changes incrementally ([16e0bac](https://github.com/SemouSky/ip-allowlist/commit/16e0bacd164881de126d35dc32330fe68de9b7db))
+* **upgrade:** offline paths, 0600 state files and docs polish ([7605f0a](https://github.com/SemouSky/ip-allowlist/commit/7605f0a16d956989df1fc4ecf92642a8165ae737))
+* verify applied state, lifecycle list and fail2ban checks ([edbccf7](https://github.com/SemouSky/ip-allowlist/commit/edbccf73f625e246b4aac22729adda89c41822ba))
+
+
+### Bug Fixes
+
+* close the remaining plan gaps found in the re-audit ([7e7eeb2](https://github.com/SemouSky/ip-allowlist/commit/7e7eeb274c7e76d5315dae50e32a2909253616c1))
+* fourth-pass audit gaps (snapshots, residual, boot unit, timer interval) ([653c359](https://github.com/SemouSky/ip-allowlist/commit/653c359010afa6fc6431a6e74c478f4d6e1f61bb))
+* **systemd:** start even when optional paths are absent ([a6431ca](https://github.com/SemouSky/ip-allowlist/commit/a6431cae53cde299d4e9ccb27f03e2a08f24c76e))
+
 ## [0.1.1](https://github.com/SemouSky/ip-allowlist/compare/v0.1.0...v0.1.1) (2026-09-18)
 
 

@@ -169,7 +169,10 @@ allow manual rollback.
 - After the firewall is applied it is verified (sets/ipsets/rules present and
   counts matching). If verification fails, the sources are restored from the
   snapshots taken before the run and the previous state is re-applied; if that
-  also fails, `sync` exits 2.
+  also fails, ufw/firewalld configuration directories are restored from the
+  file snapshot taken before the run, and then `sync` exits 2 if still broken.
+- firewalld records the exact rich rule strings it wrote, so a later apply
+  removes them precisely (a prefix scan is kept as a fallback).
 - The fail2ban drop-in is written only if `fail2ban-client -t` accepts it;
   otherwise the previous drop-in is restored.
 - `flock` prevents concurrent runs.

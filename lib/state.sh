@@ -199,6 +199,56 @@ state_snapshot_backend() {
 }
 
 # ---------------------------------------------------------------------------
+# File-level snapshots (used by backends that manage config directories)
+# ---------------------------------------------------------------------------
+
+# Copy files/directories into snapshots/backend/<tag>-<ts>/ with a manifest.
+# Usage: state_snapshot_paths <tag> <path> ...
+state_snapshot_paths() {
+  local tag="$1"; shift
+  local ts dir p i=0
+  ts=$(date +%s)
+  dir="$STATE_DIR/snapshots/backend/${tag}-${ts}"
+  mkdir -p -- "$dir"
+  : >"$dir/manifest"
+  for p in "$@"; do
+    [[ -e "$p" ]] || continue
+    i=$(( i + 1 ))
+    printf '%s\n' "$p" >>"$dir/manifest"
+    cp -a -- "$p" "$dir/$i" 2>/dev/null || true
+  done
+  # Prune old directories for this tag.
+  local -a dirs=()
+  mapfile -t dirs < <(find "$STATE_DIR/snapshots/backend" -maxdepth 1 -type d -name "${tag}-*" 2>/dev/null | sort)
+  local keep="${SNAPSHOT_RETENTION:-3}"
+  local j
+  for (( j = 0; j < ${#dirs[@]} - keep; j++ )); do
+    rm -rf -- "${dirs[j]}"
+  done
+}
+
+# Restore the newest snapshot taken by state_snapshot_paths for a tag.
+# Usage: state_restore_paths <tag>
+state_restore_paths() {
+  local tag="$1"
+  local latest
+  latest=$(find "$STATE_DIR/snapshots/backend" -maxdepth 1 -type d -name "${tag}-*" 2>/dev/null | sort | tail -n1)
+  [[ -n "$latest" && -f "$latest/manifest" ]] || return 1
+  local p i=0
+  while IFS= read -r p; do
+    i=$(( i + 1 ))
+    [[ -e "$latest/$i" ]] || continue
+    if [[ -d "$latest/$i" ]]; then
+      rm -rf -- "$p"
+      cp -a -- "$latest/$i" "$p" || return 1
+    else
+      cp -a -- "$latest/$i" "$p" || return 1
+    fi
+  done <"$latest/manifest"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Known-source list (used to detect disabled/removed sources)
 # ---------------------------------------------------------------------------
 

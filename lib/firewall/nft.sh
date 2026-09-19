@@ -251,6 +251,11 @@ nft_verify() {
   return 0
 }
 
+# nft state lives in the kernel; logical snapshots cover rollback. No
+# configuration files are managed, so file snapshots are no-ops.
+nft_snapshot_files() { return 0; }
+nft_restore_files() { return 1; }
+
 # Save the current nft table to a file (for rollback/audit).
 nft_snapshot() {
   local out="$1"

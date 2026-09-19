@@ -16,6 +16,8 @@
 _IP_ALLOWLIST_FIREWALLD_LOADED=1
 
 FIREWALLD_ZONE="${FIREWALLD_ZONE:-}"
+# Rich rules added by the last apply (exact strings).
+FIREWALLD_RULES=()
 readonly FIREWALLD_IPSET_PREFIX="ia"
 
 # ---------------------------------------------------------------------------
@@ -83,9 +85,18 @@ firewalld_family_rule() {
 # Rich rules
 # ---------------------------------------------------------------------------
 
-# Remove every ip-allowlist rich rule from the zone.
+# Remove every ip-allowlist rich rule from the zone. Recorded rules from the
+# previous apply are removed by exact string first, then a prefix scan catches
+# anything else.
 firewalld_remove_rich_rules() {
   local zone="$1" rule
+  local rec="${state_dir:-}/firewall.firewalld-rules"
+  if [[ -n "${state_dir:-}" && -f "$rec" ]]; then
+    while IFS= read -r rule || [[ -n "$rule" ]]; do
+      [[ -n "$rule" ]] || continue
+      firewall-cmd --permanent --zone="$zone" --remove-rich-rule="$rule" >/dev/null 2>&1 || true
+    done <"$rec"
+  fi
   while IFS= read -r rule || [[ -n "$rule" ]]; do
     [[ -n "$rule" ]] || continue
     [[ "$rule" == *"ipset=\"${FIREWALLD_IPSET_PREFIX}-"* ]] || continue
@@ -101,23 +112,24 @@ firewalld_add_rules() {
   rfamily=$(firewalld_family_rule "$fam")
 
   if [[ -z "$protocols" ]]; then
-    firewall-cmd --permanent --zone="$zone" \
-      --add-rich-rule="rule family=\"$rfamily\" source ipset=\"$name\" accept" >/dev/null 2>&1
+    local plain="rule family=\"$rfamily\" source ipset=\"$name\" accept"
+    firewall-cmd --permanent --zone="$zone" --add-rich-rule="$plain" >/dev/null 2>&1
+    FIREWALLD_RULES+=("$plain")
     return 0
   fi
 
   local proto range
   for proto in $protocols; do
     if [[ "$ports" == "any" ]]; then
-      firewall-cmd --permanent --zone="$zone" \
-        --add-rich-rule="rule family=\"$rfamily\" source ipset=\"$name\" protocol value=\"$proto\" accept" >/dev/null 2>&1 \
-        || return 1
+      local r="rule family=\"$rfamily\" source ipset=\"$name\" protocol value=\"$proto\" accept"
+      firewall-cmd --permanent --zone="$zone" --add-rich-rule="$r" >/dev/null 2>&1 || return 1
+      FIREWALLD_RULES+=("$r")
     else
       for range in ${ports//,/ }; do
         [[ -n "$range" ]] || continue
-        firewall-cmd --permanent --zone="$zone" \
-          --add-rich-rule="rule family=\"$rfamily\" source ipset=\"$name\" port port=\"$range\" protocol=\"$proto\" accept" >/dev/null 2>&1 \
-          || return 1
+        local r="rule family=\"$rfamily\" source ipset=\"$name\" port port=\"$range\" protocol=\"$proto\" accept"
+        firewall-cmd --permanent --zone="$zone" --add-rich-rule="$r" >/dev/null 2>&1 || return 1
+        FIREWALLD_RULES+=("$r")
       done
     fi
   done
@@ -203,6 +215,7 @@ firewalld_apply() {
   fi
 
   firewalld_remove_rich_rules "$zone"
+  FIREWALLD_RULES=()
 
   local -a desired=()
   local f base fam entries name ports protocol ipv4 ipv6 protocols
@@ -240,6 +253,17 @@ firewalld_apply() {
   done
 
   firewalld_remove_stale_sets "${desired[@]:-}"
+
+  # Record the exact rich rules written, so a later apply (or a version with a
+  # different rule format) can remove them precisely.
+  if (( ${#FIREWALLD_RULES[@]} > 0 )); then
+    local rules_tmp
+    rules_tmp=$(tmpfile "fw-rules")
+    printf '%s\n' "${FIREWALLD_RULES[@]}" >"$rules_tmp"
+    atomic_install "$rules_tmp" "$state_dir/firewall.firewalld-rules" "0600"
+  else
+    rm -f -- "$state_dir/firewall.firewalld-rules"
+  fi
 
   if ! firewall-cmd --reload >/dev/null 2>&1; then
     log_error "firewalld: reload failed"
@@ -287,6 +311,19 @@ firewalld_verify() {
 # ---------------------------------------------------------------------------
 # Snapshot / cleanup / status
 # ---------------------------------------------------------------------------
+
+# Snapshot the firewalld configuration directory (file-level rollback).
+firewalld_snapshot_files() {
+  state_snapshot_paths firewalld /etc/firewalld
+}
+
+# Restore the firewalld configuration directory and reload.
+firewalld_restore_files() {
+  state_restore_paths firewalld || return 1
+  firewall-cmd --reload >/dev/null 2>&1 || true
+  log_warn "firewalld: restored configuration files from snapshot"
+  return 0
+}
 
 firewalld_snapshot() {
   local out="$1" zone

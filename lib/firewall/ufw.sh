@@ -244,6 +244,19 @@ ufw_snapshot() {
   ufw status verbose >"$out" 2>/dev/null || : >"$out"
 }
 
+# Snapshot the ufw configuration directories (file-level rollback).
+ufw_snapshot_files() {
+  state_snapshot_paths ufw /etc/ufw /etc/default/ufw
+}
+
+# Restore the ufw configuration directories and reload.
+ufw_restore_files() {
+  state_restore_paths ufw || return 1
+  ufw reload >/dev/null 2>&1 || true
+  log_warn "ufw: restored configuration files from snapshot"
+  return 0
+}
+
 ufw_cleanup() {
   local raw existing cidr source proto port
   raw=$(tmpfile "ufw-clean-raw")

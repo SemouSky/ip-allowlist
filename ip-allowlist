@@ -521,6 +521,24 @@ backend_verify() {
   esac
 }
 
+# Snapshot the backend's configuration files before applying (best effort).
+backend_snapshot_files() {
+  case "$BACKEND" in
+    nft) nft_snapshot_files ;;
+    ufw) ufw_snapshot_files ;;
+    firewalld) firewalld_snapshot_files ;;
+  esac
+}
+
+# Restore the backend's configuration files (last-resort rollback).
+backend_restore_files() {
+  case "$BACKEND" in
+    nft) nft_restore_files ;;
+    ufw) ufw_restore_files ;;
+    firewalld) firewalld_restore_files ;;
+  esac
+}
+
 # Restore the given sources from their snapshots (used for rollback).
 rollback_sources() {
   local n
@@ -990,6 +1008,7 @@ cmd_sync() {
     log_debug "snapshotting current backend state"
     backend_snapshot "$snap"
     state_snapshot_backend "$BACKEND" "$snap"
+    backend_snapshot_files
 
     if ! backend_apply; then
       log_error "failed to apply firewall rules; state preserved for retry"
@@ -1002,10 +1021,14 @@ cmd_sync() {
       log_error "post-apply verification failed; rolling back"
       rollback_sources "${changed_names[@]:-}"
       if ! backend_apply || ! backend_verify; then
-        log_error "rollback failed; manual intervention required"
-        state_clear_in_progress
-        lock_release
-        exit 2
+        log_error "logical rollback failed; attempting file-level restore"
+        backend_restore_files || true
+        if ! backend_apply || ! backend_verify; then
+          log_error "rollback failed; manual intervention required"
+          state_clear_in_progress
+          lock_release
+          exit 2
+        fi
       fi
       state_clear_in_progress
       lock_release

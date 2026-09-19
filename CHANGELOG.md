@@ -88,6 +88,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `upgrade --version/--from-dir/--from-tarball` delegate to install.sh for
   offline or pinned installs; a failed install leaves the previous version intact
 - state files are written `0600`
+- ufw/firewalld configuration directories are snapshotted before apply and
+  restored as a last-resort rollback; firewalld records its exact rich rules
 
 ## [0.0.0] - 2026-09-18
 

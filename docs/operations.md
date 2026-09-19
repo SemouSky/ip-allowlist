@@ -29,7 +29,12 @@ enables `ip-allowlist.timer`.
 | `ip-allowlist uninstall [--purge] [--yes]` | Remove firewall objects, units, the program and (with `--purge`) config/state |
 
 Common flags: `--config FILE`, `--verbose`, `--quiet`, `--dry-run`, `--force`,
-`--json`, `--check`, `--purge`, `--yes`.
+`--json`, `--check`, `--purge`, `--yes`, `--source NAME`, `--allow-empty`.
+
+`--dry-run` logs the planned actions and changes nothing (no firewall, fail2ban
+or state writes). For `upgrade`, write the pinned version as
+`upgrade --version VER` (or `--version=VER` / `--upgrade-version VER`); a bare
+`--version` prints the program version.
 
 ## Scheduling
 

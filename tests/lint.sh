@@ -25,6 +25,7 @@ SCRIPTS=(
   "$ROOT/tests/docker/scenarios/ufw.sh"
   "$ROOT/tests/docker/scenarios/firewalld.sh"
   "$ROOT/tests/docker/scenarios/connectivity.sh"
+  "$ROOT/tests/docker/scenarios/cli.sh"
 )
 
 find_bash4() {

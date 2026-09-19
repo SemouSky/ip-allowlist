@@ -30,9 +30,10 @@ LOG_LEVEL="${LOG_LEVEL:-$LOG_LEVEL_INFO}"
 LOG_TARGET="${LOG_TARGET:-auto}"
 LOG_FORMAT="${LOG_FORMAT:-text}"
 LOG_FILE="${LOG_FILE:-}"
-QUIET=0
-RUN_ID=""
-DRY_RUN=0
+# Do not clobber values already set by the CLI argument parser.
+QUIET="${QUIET:-0}"
+RUN_ID="${RUN_ID:-}"
+DRY_RUN="${DRY_RUN:-0}"
 LOG_COMPONENT="${LOG_COMPONENT:-main}"
 
 # Derived log routing (set by log_configure_targets from LOG_TARGET).

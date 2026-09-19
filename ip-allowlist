@@ -48,6 +48,7 @@ OFFLINE=0
 AUTO_UPDATE_FAILED=0
 UPGRADE_SYNC=0
 HELP_TOPIC=""
+LOG_LEVEL_HINT=""
 PREV_CLEANUP_INCOMPLETE=0
 UPGRADE_VERSION=""
 FROM_TARBALL=""
@@ -267,14 +268,24 @@ parse_args() {
         CONFIG_FILE="${1#*=}"
         ;;
       --json) JSON_OUT=1 ;;
-      --verbose|-v) LOG_LEVEL="$LOG_LEVEL_DEBUG"; LOG_LEVEL_CLI=1 ;;
-      --quiet|-q) QUIET=1; LOG_LEVEL="$LOG_LEVEL_WARN"; LOG_LEVEL_CLI=1 ;;
+      --verbose|-v) LOG_LEVEL_HINT=debug; LOG_LEVEL_CLI=1 ;;
+      --quiet|-q) QUIET=1; LOG_LEVEL_HINT=warn; LOG_LEVEL_CLI=1 ;;
       --dry-run) DRY_RUN=1 ;;
       --force) FORCE=1 ;;
       --check) STATUS_CHECK=1; UPGRADE_CHECK=1 ;;
       --purge) PURGE=1 ;;
       --yes|-y) ASSUME_YES=1 ;;
-      --version) COMMAND="version" ;;
+      --version)
+        # 'upgrade --version X' pins a version; a bare --version shows the
+        # version. Use --version=X or --upgrade-version for the former form if
+        # the flag must precede the command.
+        if [[ "$COMMAND" == "upgrade" && $# -gt 1 ]]; then
+          shift
+          UPGRADE_VERSION="$1"
+        else
+          COMMAND="version"
+        fi
+        ;;
       --version=*) UPGRADE_VERSION="${1#*=}" ;;
       --upgrade-version)
         shift
@@ -1494,17 +1505,20 @@ cmd_sources() {
       local ref
       ref=$(source_ref "$name")
       local -n src="$ref"
-      local interval due stale last
+      local interval due stale last sstatus
       interval="${src[update_interval]:-$UPDATE_INTERVAL}"
       due=false
       source_is_due "$STATE_DIR" "$name" "$interval" && due=true
       stale=false
       state_is_stale "$name" && stale=true
+      sstatus="ok"
+      if [[ "${src[enabled]}" != "true" ]]; then sstatus="disabled"
+      elif [[ "$stale" == "true" ]]; then sstatus="stale"; fi
       last="$(state_last_run "$name")"
       (( first == 1 )) || printf ','
       first=0
-      printf '{"name":"%s","enabled":%s,"type":"%s","allow_ports":"%s","allow_protocol":"%s","enable_ipv4":%s,"enable_ipv6":%s,"due":%s,"stale":%s,"last_success":"%s","target":"%s"}' \
-        "$(json_escape "$name")" "${src[enabled]}" "${src[type]}" \
+      printf '{"name":"%s","enabled":%s,"status":"%s","type":"%s","allow_ports":"%s","allow_protocol":"%s","enable_ipv4":%s,"enable_ipv6":%s,"due":%s,"stale":%s,"last_success":"%s","target":"%s"}' \
+        "$(json_escape "$name")" "${src[enabled]}" "$sstatus" "${src[type]}" \
         "$(json_escape "${src[allow_ports]}")" "$(json_escape "${src[allow_protocol]}")" \
         "${src[enable_ipv4]}" "${src[enable_ipv6]}" "$due" "$stale" "$last" \
         "$(json_escape "$(source_target "$ref")")"
@@ -1968,6 +1982,12 @@ cmd_uninstall() {
 main() {
   parse_args "$@"
   load_libraries
+
+  # Command-line log level now that the level constants exist.
+  case "${LOG_LEVEL_HINT:-}" in
+    debug) LOG_LEVEL="$LOG_LEVEL_DEBUG" ;;
+    warn) LOG_LEVEL="$LOG_LEVEL_WARN" ;;
+  esac
 
   # Reclaim temp files and release the lock on every exit path.
   trap 'cleanup_tmp; lock_release' EXIT

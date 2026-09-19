@@ -100,6 +100,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `allow_ports=all`, `firewall_enabled=true`, `fail2ban_enabled=true`,
   `update_interval=7d`
 - documented the `log_target=auto` output chain
+- fixed `--dry-run` actually applying changes: `lib/common.sh` unconditionally
+  reset `DRY_RUN`/`QUIET` after the argument parser had set them
+- fixed `--verbose`/`--quiet` aborting with "LOG_LEVEL_DEBUG: unbound variable"
+  (the level constants are defined after argument parsing)
+- fixed `upgrade --version VER` being parsed as the `version` command; it now
+  pins the version (use `upgrade --version=VER` or `--upgrade-version VER` if the
+  flag must come first)
+- `sources --json` now includes the per-source `status` field
 - fixed `uninstall` leaving ufw rules behind: the comment printed by
   `ufw show added` is quoted, so the delete spec did not match; quotes are now
   stripped and uninstall reports (and exits non-zero on) leftover objects

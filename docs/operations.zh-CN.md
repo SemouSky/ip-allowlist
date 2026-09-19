@@ -25,7 +25,9 @@ sudo ./install.sh
 | `ip-allowlist install` | 全系统安装 |
 | `ip-allowlist uninstall [--purge]` | 卸载 |
 
-常用参数：`--config FILE`、`--verbose`、`--quiet`、`--dry-run`、`--force`、`--json`、`--check`、`--purge`、`--yes`。
+常用参数：`--config FILE`、`--verbose`、`--quiet`、`--dry-run`、`--force`、`--json`、`--check`、`--purge`、`--yes`、`--source NAME`、`--allow-empty`。
+
+`--dry-run` 仅记录计划动作，不改动任何东西（不写防火墙、fail2ban 或状态）。`upgrade` 指定版本请写成 `upgrade --version VER`（或 `--version=VER` / `--upgrade-version VER`）；单独使用 `--version` 表示显示程序版本。
 
 ## 调度
 

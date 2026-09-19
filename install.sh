@@ -167,7 +167,10 @@ resolve_sources() {
     extract_archive "$FROM_TARBALL"
     return 0
   fi
-  if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/ip-allowlist" && -f "$SCRIPT_DIR/lib/common.sh" ]]; then
+  # An explicit --version wins over a local checkout so that, for example,
+  # 'upgrade --version X' installs X instead of re-installing the current tree.
+  if [[ -z "$REQUEST_VERSION" ]] \
+    && [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/ip-allowlist" && -f "$SCRIPT_DIR/lib/common.sh" ]]; then
     SRC_DIR="$SCRIPT_DIR"
     return 0
   fi

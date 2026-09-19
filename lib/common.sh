@@ -441,6 +441,53 @@ http_fetch() {
 }
 
 # ---------------------------------------------------------------------------
+# Release download
+# ---------------------------------------------------------------------------
+
+# Candidate download URLs for a release, most specific first. The release asset
+# name has changed over time, so try the current name, the previous name, and
+# finally the always-available source archive.
+# Usage: upgrade_asset_urls <repo> <version>
+upgrade_asset_urls() {
+  local repo="$1" ver="${2#v}"
+  printf '%s\n' \
+    "https://github.com/${repo}/releases/download/v${ver}/ip-allowlist-v${ver}.tar.gz" \
+    "https://github.com/${repo}/releases/download/v${ver}/ip-allowlist-${ver}.tar.gz" \
+    "https://github.com/${repo}/archive/refs/tags/v${ver}.tar.gz"
+}
+
+# Download and extract a release into <workdir>; echoes the extracted tree.
+# Usage: upgrade_fetch_tree <repo> <version> <workdir>
+upgrade_fetch_tree() {
+  local repo="$1" ver="${2#v}" work="$3"
+  local url archive dir d attempt=0 dest
+  while IFS= read -r url; do
+    [[ -n "$url" ]] || continue
+    attempt=$(( attempt + 1 ))
+    archive="$work/release.${attempt}.tar.gz"
+    dest="$work/try${attempt}"
+    log_debug "upgrade: trying $url"
+    if http_fetch "$url" >"$archive" 2>/dev/null && tar -tzf "$archive" >/dev/null 2>&1; then
+      mkdir -p -- "$dest"
+      if tar -xzf "$archive" -C "$dest" >/dev/null 2>&1; then
+        dir=""
+        for d in "$dest"/*/; do
+          [[ -d "$d" ]] || continue
+          dir="${d%/}"
+          break
+        done
+        if [[ -n "$dir" && -f "$dir/install.sh" ]]; then
+          printf '%s' "$dir"
+          return 0
+        fi
+      fi
+    fi
+    rm -f -- "$archive"
+  done < <(upgrade_asset_urls "$repo" "$ver")
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # Hashing
 # ---------------------------------------------------------------------------
 

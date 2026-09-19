@@ -68,6 +68,18 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+@test "upgrade asset urls cover both names and the source archive" {
+  local urls
+  urls="$(upgrade_asset_urls SemouSky/ip-allowlist v1.2.3)"
+  [[ "$urls" == *"/releases/download/v1.2.3/ip-allowlist-v1.2.3.tar.gz"* ]]
+  [[ "$urls" == *"/releases/download/v1.2.3/ip-allowlist-1.2.3.tar.gz"* ]]
+  [[ "$urls" == *"/archive/refs/tags/v1.2.3.tar.gz"* ]]
+  # the v-prefixed asset is preferred (current release naming)
+  local first
+  first="$(printf '%s\n' "$urls" | head -n1)"
+  [[ "$first" == *"ip-allowlist-v1.2.3.tar.gz" ]]
+}
+
 @test "json_escape and resolve_path" {
   [ "$(json_escape 'a"b\c')" = 'a\"b\\c' ]
   [ "$(resolve_path /x /a/b)" = "/a/b" ]

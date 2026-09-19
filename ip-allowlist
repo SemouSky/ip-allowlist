@@ -950,21 +950,13 @@ latest_remote_version() {
 # Install a specific version from its release tarball (non-interactive).
 # Usage: auto_upgrade <version>
 auto_upgrade() {
-  local latest="$1"
-  local url="https://github.com/${REPO}/releases/download/v${latest}/ip-allowlist-${latest}.tar.gz"
-  local work
+  local latest="$1" work dir
   work=$(tmpdir "autoupdate")
   log_info "auto_update: installing $latest"
-  if ! http_fetch "$url" >"$work/release.tar.gz" 2>/dev/null; then
+  if ! dir=$(upgrade_fetch_tree "$REPO" "$latest" "$work"); then
     log_warn "auto_update: download failed for $latest"
     return 1
   fi
-  if ! tar -xzf "$work/release.tar.gz" -C "$work" 2>/dev/null; then
-    log_warn "auto_update: extraction failed"
-    return 1
-  fi
-  local dir="$work/ip-allowlist-${latest}"
-  [[ -x "$dir/install.sh" ]] || { log_warn "auto_update: unexpected archive layout"; return 1; }
   if ! "$dir/install.sh" --yes >/dev/null 2>&1; then
     log_warn "auto_update: install failed"
     return 1
@@ -1760,14 +1752,11 @@ cmd_upgrade() {
     esac
   fi
 
-  local url="https://github.com/${repo}/releases/download/v${latest}/ip-allowlist-${latest}.tar.gz"
-  local tmpd
+  local tmpd extracted
   tmpd=$(tmpdir "upgrade")
-  out "downloading $url"
-  http_fetch "$url" >"$tmpd/release.tar.gz" || die "download failed"
-  tar -xzf "$tmpd/release.tar.gz" -C "$tmpd" || die "extraction failed"
-  local extracted="$tmpd/ip-allowlist-${latest}"
-  [[ -d "$extracted" ]] || die "unexpected archive layout"
+  out "downloading v${latest}"
+  extracted=$(upgrade_fetch_tree "$repo" "$latest" "$tmpd") \
+    || die "download failed for v${latest} (release asset or source archive unavailable)"
   "$extracted/install.sh" --yes || die "install failed"
   out "upgraded to $latest"
   if (( UPGRADE_SYNC == 1 )); then

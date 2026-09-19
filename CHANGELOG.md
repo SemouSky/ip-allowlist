@@ -100,6 +100,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Chinese translations of all documentation (`*.zh-CN.md`)
 
 ### Fixed
+- `upgrade` requested `ip-allowlist-<ver>.tar.gz` while releases publish
+  `ip-allowlist-v<ver>.tar.gz`, so every update failed with HTTP 404; the
+  download now tries the current asset name, the previous name and the source
+  archive, and auto-detects the extracted directory
+- `install.sh --version X` preferred a local checkout over the requested
+  version, so `upgrade --version X` re-installed the current tree; an explicit
+  version now always downloads that release
 - `upgrade --check` now reports without installing (the flag was never wired up)
 - firewalld cleanup/stale-set deletion (`--get-ipsets` returns space separated
   names on one line)

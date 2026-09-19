@@ -521,6 +521,26 @@ backend_status() {
   esac
 }
 
+# Verify the applied firewall state matches the desired state.
+backend_verify() {
+  case "$BACKEND" in
+    nft) nft_verify "$STATE_DIR" ;;
+    ufw) ufw_verify "$STATE_DIR" ;;
+    firewalld) firewalld_verify "$STATE_DIR" ;;
+  esac
+}
+
+# Restore the given sources from their snapshots (used for rollback).
+rollback_sources() {
+  local n
+  for n in "$@"; do
+    [[ -n "$n" ]] || continue
+    if state_restore_latest_snapshot "$n"; then
+      log_warn "rolled back source $n to its previous values"
+    fi
+  done
+}
+
 # Remove artifacts belonging to a backend we are switching away from.
 # Runs in a subshell so sourcing the old backend cannot clobber the current one.
 # Usage: cleanup_previous_backend <backend> <firewalld_zone>
@@ -766,9 +786,11 @@ cmd_sync() {
     fi
 
     if [[ "${src[enabled]}" != "true" ]]; then
-      if [[ -f "$STATE_DIR/current/${name}.ips" || -f "$STATE_DIR/rules/${name}.conf" ]]; then
+      if [[ -f "$STATE_DIR/current/${name}.ips" || -f "$STATE_DIR/rules/${name}.conf" ]] \
+        || state_known_has "$name"; then
         log_info "source $name: disabled, removing from firewall"
         state_remove_source "$name"
+        state_known_remove "$name"
         needs_apply=1
       else
         log_debug "source $name: disabled, skipping"
@@ -826,9 +848,26 @@ cmd_sync() {
         log_info "source $orphan: no longer configured, removing from firewall"
         rm -f -- "$current_file"
         state_remove_source "$orphan"
+        state_known_remove "$orphan"
         needs_apply=1
       fi
     done
+
+    # Sources recorded in the known list but absent from the config.
+    local kname in_cfg
+    while IFS= read -r kname; do
+      [[ -n "$kname" ]] || continue
+      in_cfg=0
+      for name in "${SOURCE_NAMES[@]}"; do
+        if [[ "$name" == "$kname" ]]; then in_cfg=1; break; fi
+      done
+      if (( in_cfg == 0 )); then
+        log_info "source $kname: no longer configured, removing from firewall"
+        state_remove_source "$kname"
+        state_known_remove "$kname"
+        needs_apply=1
+      fi
+    done < <(state_known_list)
   fi
 
   # A backend change requires a rebuild so the new backend gets the allow-list.
@@ -884,6 +923,21 @@ cmd_sync() {
       exit 2
     fi
 
+    if ! backend_verify; then
+      log_error "post-apply verification failed; rolling back"
+      rollback_sources "${changed_names[@]:-}"
+      if ! backend_apply || ! backend_verify; then
+        log_error "rollback failed; manual intervention required"
+        state_clear_in_progress
+        lock_release
+        exit 2
+      fi
+      state_clear_in_progress
+      lock_release
+      log_error "changes rolled back; firewall left at the previous state"
+      return 2
+    fi
+
     for name in "${changed_names[@]}"; do
       if [[ -f "$STATE_DIR/current/${name}.ips" ]]; then
         local cref
@@ -892,6 +946,10 @@ cmd_sync() {
         state_set_applied_hash "$name" "$(source_effective_hash "$STATE_DIR" "$name" \
           "${csrc[allow_ports]}" "${csrc[allow_protocol]}" "${csrc[enable_ipv4]}" "${csrc[enable_ipv6]}")"
       fi
+    done
+    for name in "${SOURCE_NAMES[@]}"; do
+      source_selected "$name" || continue
+      [[ -f "$STATE_DIR/current/${name}.ips" ]] && state_known_add "$name"
     done
     atomic_install "$fp_tmp" "$STATE_DIR/desired.hash" "0644"
     state_set_backend "$BACKEND"
@@ -907,9 +965,13 @@ cmd_sync() {
       log_info "fail2ban: drop-in path changed, removing old $prev_dropin"
       rm -f -- "$prev_dropin"
     fi
-    fail2ban_apply "$STATE_DIR" "$FAIL2BAN_DROPIN"
-    state_set_key "fail2ban.ignoreip-file" "$FAIL2BAN_DROPIN"
-    fail2ban_reload
+    if fail2ban_apply "$STATE_DIR" "$FAIL2BAN_DROPIN"; then
+      state_set_key "fail2ban.ignoreip-file" "$FAIL2BAN_DROPIN"
+      fail2ban_reload
+    else
+      log_error "fail2ban: apply failed; previous drop-in restored"
+      failures=$(( failures + 1 ))
+    fi
   fi
 
   state_clear_in_progress

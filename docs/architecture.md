@@ -68,7 +68,9 @@ sources.d/*.conf
   rules/<source>.conf         Effective rule parameters (ports/protocol/families)
   applied/<source>.hash       Hash of applied entries + rule parameters
   desired.hash                Fingerprint of the whole desired firewall state
+  sources.known               Sources that have been applied (for cleanup)
   status/<source>.last_run    Unix timestamp of last successful fetch
+  status/<source>.stale       Present when the last fetch failed (values kept)
   snapshots/<source>/*.ips    Last 10 canonical snapshots per source
   snapshots/backend/          Last 5 backend state dumps
   fail2ban/union.ips          Rendered union of all source + user entries
@@ -152,10 +154,18 @@ manual rollback.
 
 ## Failure handling
 
-- A source that fails fetch/validation is logged and skipped; the previous
-  `current/` file is retained so the firewall keeps working.
+- A source that fails fetch/validation is logged, marked stale, and skipped; the
+  previous `current/` file is retained so the firewall keeps working. The next
+  run retries it immediately.
+- A result that shrinks beyond `max_shrink_ratio` is rejected and the previous
+  values are kept (`--force` bypasses the guard).
 - Any source failure makes `sync` exit non-zero (2) so timers/monitoring see it.
-- If backend apply fails, `sync` exits 2 without updating applied hashes.
+- After the firewall is applied it is verified (sets/ipsets/rules present and
+  counts matching). If verification fails, the sources are restored from the
+  snapshots taken before the run and the previous state is re-applied; if that
+  also fails, `sync` exits 2.
+- The fail2ban drop-in is written only if `fail2ban-client -t` accepts it;
+  otherwise the previous drop-in is restored.
 - `flock` prevents concurrent runs.
 
 ## Exit codes

@@ -204,6 +204,24 @@ ufw_apply() {
   return 0
 }
 
+# Verify that every desired managed rule is present.
+# Usage: ufw_verify <state_dir>
+ufw_verify() {
+  local state_dir="$1"
+  local desired existing raw
+  desired=$(tmpfile "ufw-verify-desired")
+  existing=$(tmpfile "ufw-verify-existing")
+  raw=$(tmpfile "ufw-verify-raw")
+  ufw_build_desired "$state_dir" "$desired"
+  ufw show added 2>/dev/null >"$raw"
+  ufw_parse_added "$raw" "$existing"
+  if LC_ALL=C comm -13 "$existing" "$desired" | grep -q .; then
+    log_error "ufw verify: applied rules do not match the desired set"
+    return 1
+  fi
+  return 0
+}
+
 # ---------------------------------------------------------------------------
 # Snapshot / cleanup / status
 # ---------------------------------------------------------------------------

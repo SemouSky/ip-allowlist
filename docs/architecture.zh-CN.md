@@ -65,7 +65,9 @@ sources.d/*.conf
   rules/<source>.conf         生效的规则参数（端口/协议/地址族）
   applied/<source>.hash       已应用条目 + 规则参数的哈希
   desired.hash                整个期望防火墙状态的指纹
+  sources.known               曾应用过的来源（用于清理）
   status/<source>.last_run    上次成功获取的 Unix 时间戳
+  status/<source>.stale       上次获取失败时存在（保留旧值）
   snapshots/<source>/*.ips    每个来源最近 10 个规范化快照
   snapshots/backend/          最近 5 个后端状态转储
   fail2ban/union.ips          所有来源 + 用户条目的联合结果
@@ -119,9 +121,11 @@ rule family="ipv4" source ipset="ia-<source>-v4-<hash>" accept
 
 ## 失败处理
 
-- 获取/校验失败的来源会被记录并跳过；其先前的 `current/` 文件会保留，从而防火墙继续可用。
+- 获取/校验失败的来源会被记录、标记为 stale 并跳过；其先前的 `current/` 文件会保留，从而防火墙继续可用。下次运行会立即重试。
+- 收缩超过 `max_shrink_ratio` 的结果会被拒绝并保留上次值（`--force` 可绕过）。
 - 任一来源失败都会使 `sync` 以非零（2）退出，便于定时器/监控感知。
-- 若后端应用失败，`sync` 以 2 退出，且不更新已应用哈希。
+- 防火墙应用后会做自检（set/ipset/规则存在且数量匹配）。自检失败时，会从运行前快照恢复各来源并重新应用上一状态；若仍失败，`sync` 以 2 退出。
+- fail2ban drop-in 只有在 `fail2ban-client -t` 通过后才保留，否则恢复上一份。
 - `flock` 防止并发运行。
 
 ## 退出码

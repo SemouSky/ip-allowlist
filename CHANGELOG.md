@@ -45,6 +45,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `upgrade --check` now reports without installing (the flag was never wired up)
+- firewalld cleanup/stale-set deletion (`--get-ipsets` returns space separated
+  names on one line)
+
+### Changed
+- **BREAKING**: config now uses the planned flat keys
+  (`firewall_enabled`, `sources_dir`, `state_dir`, `allow_ports`,
+  `allow_protocol`, `enable_ipv4/6`, `log_level`, `log_target`, `log_file`,
+  `log_format`, `firewalld_zone`, `lock_file`, `lock_wait`, ...); unknown keys
+  are rejected
+- Source keys are now `urls` / `paths` (lists) with `format`, and a strict
+  `^[a-z][a-z0-9_-]{0,15}$` name; unknown keys are rejected
+- Source data is parsed strictly: an invalid entry fails the source
+- `max_shrink_ratio` now rejects the result (keeping previous values) unless
+  `--force` is given
+- Zero active sources aborts unless `allow_empty_sources=true` / `--allow-empty`
+
+### Added
+- Post-apply firewall verification with snapshot rollback on failure
+- fail2ban `-t` validation with drop-in restore, and `fail2ban_merge_existing`
+- `sources.known` lifecycle list and `snapshot_retention`
+- `--source`, `--allow-empty`, `check --offline`, `run` alias
+- `stale` status marker surfaced by `status --check`
 
 ## [0.0.0] - 2026-09-18
 

@@ -147,8 +147,8 @@ state_snapshot_source() {
   local ts
   ts=$(date +%s)
   cp -- "$src" "$dir/${ts}.ips"
-  # Retain only the most recent 10 snapshots per source.
-  prune_snapshots "$dir" 10 ".ips"
+  # Retain only the most recent snapshots per source.
+  prune_snapshots "$dir" "${SNAPSHOT_RETENTION:-3}" ".ips"
 }
 
 # Save an arbitrary firewall state blob to the snapshot area.
@@ -160,7 +160,46 @@ state_snapshot_backend() {
   local ts
   ts=$(date +%s)
   cp -- "$file" "$dir/${backend}-${ts}.state"
-  prune_snapshots "$dir" 5 "-*.state"
+  prune_snapshots "$dir" "${SNAPSHOT_RETENTION:-3}" "-*.state"
+}
+
+# ---------------------------------------------------------------------------
+# Known-source list (used to detect disabled/removed sources)
+# ---------------------------------------------------------------------------
+
+state_known_file() {
+  state_path "sources.known"
+}
+
+state_known_list() {
+  local f
+  f=$(state_known_file)
+  [[ -f "$f" ]] || return 0
+  grep -v '^[[:space:]]*$' "$f" 2>/dev/null || true
+}
+
+state_known_has() {
+  local name="$1"
+  state_known_list | grep -Fxq -- "$name"
+}
+
+state_known_add() {
+  local name="$1"
+  local f
+  f=$(state_known_file)
+  state_known_has "$name" && return 0
+  printf '%s\n' "$name" >>"$f"
+}
+
+state_known_remove() {
+  local name="$1"
+  local f
+  f=$(state_known_file)
+  [[ -f "$f" ]] || return 0
+  local tmp
+  tmp=$(tmpfile "known")
+  grep -Fxv -- "$name" "$f" >"$tmp" 2>/dev/null || true
+  atomic_install "$tmp" "$f" "0644"
 }
 
 # Keep the newest N files in a directory matching a suffix/pattern.

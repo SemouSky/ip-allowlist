@@ -240,6 +240,40 @@ firewalld_apply() {
   return 0
 }
 
+# Verify that every expected ipset exists with the expected entry count.
+# Usage: firewalld_verify <state_dir>
+firewalld_verify() {
+  local state_dir="$1"
+  local -a sets=()
+  read -ra sets < <(firewall-cmd --permanent --get-ipsets 2>/dev/null)
+  local f base fam entries name expected actual
+  for f in "$state_dir"/current/*.ips; do
+    [[ -e "$f" ]] || continue
+    base=$(basename -- "$f" .ips)
+    for fam in v4 v6; do
+      entries=$(tmpfile "fw-verify-${base}-${fam}")
+      if [[ "$fam" == "v4" ]]; then
+        grep -v ':' "$f" >"$entries" 2>/dev/null || true
+      else
+        grep ':' "$f" >"$entries" 2>/dev/null || true
+      fi
+      [[ -s "$entries" ]] || continue
+      name=$(firewalld_set_name "$base" "$fam")
+      if ! printf '%s\n' "${sets[@]:-}" | grep -Fxq -- "$name"; then
+        log_error "firewalld verify: ipset $name missing"
+        return 1
+      fi
+      expected=$(wc -l <"$entries")
+      actual=$(firewall-cmd --ipset="$name" --get-entries 2>/dev/null | sed '/^[[:space:]]*$/d' | wc -l)
+      if (( actual != expected )); then
+        log_error "firewalld verify: ipset $name has $actual entries, expected $expected"
+        return 1
+      fi
+    done
+  done
+  return 0
+}
+
 # ---------------------------------------------------------------------------
 # Snapshot / cleanup / status
 # ---------------------------------------------------------------------------

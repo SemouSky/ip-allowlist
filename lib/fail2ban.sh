@@ -136,16 +136,18 @@ fail2ban_build_union() {
     cat -- "$f" >>"$combined"
   done
 
-  # User-defined entries, normalized.
+  # User-defined entries, normalized. Skipped when merging is disabled.
   local raw entry norm
-  raw=$(tmpfile "f2b-user")
-  fail2ban_collect_user_ips "$own" >"$raw"
-  while IFS= read -r entry || [[ -n "$entry" ]]; do
-    entry=$(trim "$entry")
-    [[ -z "$entry" ]] && continue
-    norm=$(fail2ban_normalize_entry "$entry")
-    [[ -n "$norm" ]] && printf '%s\n' "$norm" >>"$combined"
-  done <"$raw"
+  if [[ "${FAIL2BAN_MERGE_EXISTING:-true}" == "true" ]]; then
+    raw=$(tmpfile "f2b-user")
+    fail2ban_collect_user_ips "$own" >"$raw"
+    while IFS= read -r entry || [[ -n "$entry" ]]; do
+      entry=$(trim "$entry")
+      [[ -z "$entry" ]] && continue
+      norm=$(fail2ban_normalize_entry "$entry")
+      [[ -n "$norm" ]] && printf '%s\n' "$norm" >>"$combined"
+    done <"$raw"
+  fi
 
   canonicalize_stream <"$combined" >"$output"
 }
@@ -199,10 +201,28 @@ fail2ban_apply() {
     return 0
   fi
 
-  local rendered
+  local rendered backup=""
   rendered=$(tmpfile "f2b-render")
   fail2ban_render "$union" >"$rendered"
+  if fail2ban_dropin_present "$dropin"; then
+    backup=$(tmpfile "f2b-backup")
+    cp -- "$dropin" "$backup"
+  fi
   atomic_install "$rendered" "$dropin" "0644"
+
+  # Validate the resulting fail2ban configuration before keeping it.
+  if have fail2ban-client; then
+    if ! fail2ban-client -t >/dev/null 2>&1; then
+      log_error "fail2ban: configuration test failed; restoring previous drop-in"
+      if [[ -n "$backup" ]]; then
+        atomic_install "$backup" "$dropin" "0644"
+      else
+        rm -f -- "$dropin"
+      fi
+      return 1
+    fi
+  fi
+
   state_set_fail2ban_hash "$hash"
   log_info "fail2ban: wrote $count entries to $dropin"
   printf '%s' "updated"

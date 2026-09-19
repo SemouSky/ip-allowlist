@@ -179,6 +179,38 @@ nft_apply() {
   log_info "nft: applied ruleset (table $NFT_FAMILY $NFT_TABLE)"
 }
 
+# Verify that every expected set exists in the live table.
+# Usage: nft_verify <state_dir>
+nft_verify() {
+  local state_dir="$1"
+  local live
+  if ! live=$(nft list table "$NFT_FAMILY" "$NFT_TABLE" 2>/dev/null); then
+    log_error "nft verify: table $NFT_FAMILY $NFT_TABLE missing"
+    return 1
+  fi
+  local entries base name ipv4 ipv6
+  for entries in "$state_dir"/current/*.ips; do
+    [[ -e "$entries" ]] || continue
+    base=$(basename -- "$entries" .ips)
+    name=$(nft_sanitize_name "$base")
+    ipv4=$(rule_spec_get "$state_dir" "$base" enable_ipv4 true)
+    ipv6=$(rule_spec_get "$state_dir" "$base" enable_ipv6 true)
+    if [[ "$ipv4" == "true" ]] && grep -qv ':' "$entries" 2>/dev/null; then
+      if [[ "$live" != *"set v4_${name} "* && "$live" != *"set v4_${name}"$'\n'* ]]; then
+        log_error "nft verify: set v4_${name} missing"
+        return 1
+      fi
+    fi
+    if [[ "$ipv6" == "true" ]] && grep -q ':' "$entries" 2>/dev/null; then
+      if [[ "$live" != *"set v6_${name} "* && "$live" != *"set v6_${name}"$'\n'* ]]; then
+        log_error "nft verify: set v6_${name} missing"
+        return 1
+      fi
+    fi
+  done
+  return 0
+}
+
 # ---------------------------------------------------------------------------
 # Snapshot / cleanup / status
 # ---------------------------------------------------------------------------

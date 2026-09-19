@@ -113,6 +113,11 @@ assert_contains "nft chain accepts ip6 saddr" "$rules" "ip6 saddr @v6_v6src acce
 
 if [[ -f "$STATE/current/v4src.ips" ]]; then pass "state current file written"; else fail "state current file written"; fi
 if [[ -f "$STATE/applied/v4src.hash" ]]; then pass "applied hash written"; else fail "applied hash written"; fi
+if grep -Fxq "v4src" "$STATE/sources.known" 2>/dev/null; then
+  pass "known list records applied source"
+else
+  fail "known list records applied source"
+fi
 
 # ---------------------------------------------------------------------------
 # 2. Idempotent re-run
@@ -256,6 +261,11 @@ EOF
 "$CLI" --config "$CONF" sync >"$WS/out10" 2>&1
 rules="$(nft list table inet ip-allowlist 2>/dev/null || true)"
 assert_not_contains "disabled source not in firewall" "$rules" "2001:db8::/32"
+if grep -Fxq "v6src" "$STATE/sources.known" 2>/dev/null; then
+  fail "disabled source removed from known list"
+else
+  pass "disabled source removed from known list"
+fi
 
 # ---------------------------------------------------------------------------
 # 8. fail2ban union drop-in
@@ -541,6 +551,73 @@ sed -i 's/^allow_ports=443$/allow_ports=443,8443/' "$RP/sources.d/rp.conf"
 rules="$(nft list table inet ip-allowlist 2>/dev/null || true)"
 assert_contains "nft port parameter change rebuilds" "$rules" "tcp dport { 443, 8443 } accept"
 "$CLI" --config "$RP/config.conf" cleanup >/dev/null 2>&1
+
+# ---------------------------------------------------------------------------
+# 10f. snapshot retention and fail2ban merge_existing
+# ---------------------------------------------------------------------------
+RN="$WS/retention"
+mkdir -p "$RN/sources.d"
+printf '1.2.3.0/24\n' >"$RN/v.txt"
+cat >"$RN/sources.d/r.conf" <<EOF
+enabled=true
+name=r
+type=file
+paths=$RN/v.txt
+min_entries=1
+EOF
+cat >"$RN/config.conf" <<EOF
+firewall_backend=nft
+allow_ports=all
+fail2ban_enabled=false
+snapshot_retention=2
+state_dir=$RN/state
+sources_dir=$RN/sources.d
+log_target=stdout
+update_interval=0
+EOF
+for i in 1 2 3 4 5; do
+  printf '10.0.0.%d/32\n' "$i" >"$RN/v.txt"
+  "$CLI" --config "$RN/config.conf" sync >/dev/null 2>&1
+done
+snap_count=$(find "$RN/state/snapshots/r" -name '*.ips' -type f 2>/dev/null | wc -l | tr -d ' ')
+if (( snap_count <= 2 )); then
+  pass "snapshot retention prunes to the configured limit"
+else
+  fail "snapshot retention prunes to the configured limit (got $snap_count)"
+fi
+"$CLI" --config "$RN/config.conf" cleanup >/dev/null 2>&1
+
+ME="$WS/merge"
+mkdir -p "$ME/sources.d"
+printf '1.2.3.0/24\n' >"$ME/v.txt"
+cat >"$ME/sources.d/m.conf" <<EOF
+enabled=true
+name=m
+type=file
+paths=$ME/v.txt
+min_entries=1
+EOF
+cat >"$ME/jail.local" <<EOF
+[DEFAULT]
+ignoreip = 127.0.0.1/8 10.9.9.9
+EOF
+cat >"$ME/config.conf" <<EOF
+firewall_backend=nft
+allow_ports=all
+fail2ban_enabled=true
+fail2ban_merge_existing=false
+fail2ban_ignoreip_file=$ME/dropin.conf
+state_dir=$ME/state
+sources_dir=$ME/sources.d
+log_target=stdout
+update_interval=0
+EOF
+FAIL2BAN_JAIL_CONF="$ME/none" FAIL2BAN_JAIL_LOCAL="$ME/jail.local" FAIL2BAN_JAIL_D="$ME/nodir" FAIL2BAN_RELOAD=false \
+  "$CLI" --config "$ME/config.conf" sync >"$ME/out" 2>&1
+dropin="$(cat "$ME/dropin.conf" 2>/dev/null || true)"
+assert_contains "merge_existing=false keeps source ip" "$dropin" "1.2.3.0/24"
+assert_not_contains "merge_existing=false drops user ip" "$dropin" "10.9.9.9"
+nft delete table inet ip-allowlist 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # 11. install/uninstall smoke test

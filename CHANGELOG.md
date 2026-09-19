@@ -95,6 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - nft applies per-source updates (flush set/chain, delete removed sources) in a
   single transaction when the table exists, falling back to full regeneration
   only on first run, backend switch, or a missing table
+- `help [command]` prints per-command help; `upgrade --sync` runs a sync after
+  upgrading
 - unit tests ported to bats (`tests/bats/*.bats`, with `tests/unit.sh` as a
   fallback when bats is unavailable); integration scenarios moved to
   `tests/docker/scenarios/*.sh`

@@ -24,7 +24,7 @@ enables `ip-allowlist.timer`.
 | `ip-allowlist status` | Show status (`--json`, `--check`) |
 | `ip-allowlist cleanup` | Remove firewall objects and the fail2ban drop-in |
 | `ip-allowlist version` | Show version |
-| `ip-allowlist upgrade [--check]` | Check for/install updates (`--check` only reports) |
+| `ip-allowlist upgrade [--check] [--version VER] [--from-dir DIR] [--from-tarball FILE] [--sync] [--force]` | Check for/install updates; `--sync` runs a sync after upgrading |
 | `ip-allowlist install` | Install system-wide |
 | `ip-allowlist uninstall [--purge]` | Remove |
 

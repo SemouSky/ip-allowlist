@@ -46,6 +46,8 @@ LOG_LEVEL_CLI=0
 ALLOW_EMPTY=0
 OFFLINE=0
 AUTO_UPDATE_FAILED=0
+UPGRADE_SYNC=0
+HELP_TOPIC=""
 UPGRADE_VERSION=""
 FROM_TARBALL=""
 FROM_DIR=""
@@ -69,7 +71,7 @@ Commands:
   upgrade          Check for and install updates
   install          Install ip-allowlist system-wide
   uninstall        Remove ip-allowlist (--purge to remove data)
-  help             Show this help
+  help [command]   Show help (optionally for one command)
 
 Options:
   --config FILE      Use alternative config file
@@ -85,6 +87,7 @@ Options:
   --version VER      upgrade: install a specific version
   --from-dir DIR     upgrade: install from an unpacked tree
   --from-tarball F   upgrade: install from a tarball
+  --sync             upgrade: run a sync immediately after upgrading
   --purge            Remove data/state on uninstall
   --yes              Assume yes for prompts
   --version          Show version
@@ -96,10 +99,112 @@ Environment:
 EOF
 }
 
+# Per-command help. Usage: usage_for <command>
+usage_for() {
+  case "$1" in
+    sync|run)
+      cat <<'EOF'
+ip-allowlist sync [options]
+
+Fetch all enabled sources, apply the firewall allow-list and reconcile the
+fail2ban drop-in. This is the default command.
+
+Options:
+  --source NAME   Limit the run to one source (repeatable); unselected sources
+                  are preserved and never treated as orphans.
+  --force         Bypass update intervals, the shrink guard and firewall
+                  conflict detection.
+  --allow-empty   Allow clearing everything when no source is active.
+  --dry-run       Log the planned actions without changing anything.
+EOF
+      ;;
+    check)
+      cat <<'EOF'
+ip-allowlist check [--source NAME] [--offline] [--json]
+
+Fetch and validate sources, report which ones would change, and write nothing.
+  --offline   Validate the configuration only; do not use the network.
+EOF
+      ;;
+    status)
+      cat <<'EOF'
+ip-allowlist status [--source NAME] [--check] [--json]
+
+Show version, backend, verification, desired/applied hashes, fail2ban status
+and the latest known version.
+  --check   Nagios style: exit non-zero on stale/never-successful sources,
+            missing artifacts or a residual previous backend.
+  --json    Machine readable output.
+EOF
+      ;;
+    sources)
+      cat <<'EOF'
+ip-allowlist sources [--json]
+
+List configured sources with type, target, due state, status and last success.
+EOF
+      ;;
+    upgrade)
+      cat <<'EOF'
+ip-allowlist upgrade [--check] [--version VER] [--from-dir DIR]
+                     [--from-tarball FILE] [--sync] [--force]
+
+Check for and install updates.
+  --check            Report the available version only.
+  --version VER      Install a specific version (only newer unless --force).
+  --from-dir DIR     Install from an unpacked tree (offline).
+  --from-tarball F   Install from a tarball (offline).
+  --sync             Run a sync immediately after upgrading.
+EOF
+      ;;
+    cleanup)
+      cat <<'EOF'
+ip-allowlist cleanup
+
+Remove all ip-allowlist firewall objects and the fail2ban drop-in, and
+invalidate the applied hashes so the next sync rebuilds the allow-list.
+EOF
+      ;;
+    apply-offline)
+      cat <<'EOF'
+ip-allowlist apply-offline
+
+Rebuild the firewall from cached state without network access (used by the
+boot service on the nft backend).
+EOF
+      ;;
+    version)
+      cat <<'EOF'
+ip-allowlist version [--json]
+
+Show the version and where the running copy was installed from.
+EOF
+      ;;
+    install|uninstall)
+      cat <<EOF
+ip-allowlist $1 [options]
+
+Delegates to $1.sh. See $1.sh --help for details.
+EOF
+      ;;
+    *)
+      usage
+      ;;
+  esac
+}
+
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      sync|run|check|apply-offline|sources|status|cleanup|version|upgrade|install|uninstall|help)
+      help)
+        COMMAND="help"
+        if [[ $# -gt 1 ]]; then
+          case "$2" in
+            sync|run|check|apply-offline|sources|status|cleanup|version|upgrade|install|uninstall) HELP_TOPIC="$2" ;;
+          esac
+        fi
+        ;;
+      sync|run|check|apply-offline|sources|status|cleanup|version|upgrade|install|uninstall)
         if [[ "$COMMAND" != "help" ]]; then
           case "$1" in
             run) COMMAND="sync" ;;
@@ -115,6 +220,7 @@ parse_args() {
       --source=*) SOURCE_FILTER+=("${1#*=}") ;;
       --allow-empty) ALLOW_EMPTY=1 ;;
       --offline) OFFLINE=1 ;;
+      --sync) UPGRADE_SYNC=1 ;;
       --from-dir)
         shift
         [[ $# -gt 0 ]] || { err "--from-dir requires an argument"; exit 64; }
@@ -1540,7 +1646,11 @@ cmd_upgrade() {
     [[ -n "$FROM_DIR" ]] && iargs+=(--from-dir "$FROM_DIR")
     [[ -n "$FROM_TARBALL" ]] && iargs+=(--from-tarball "$FROM_TARBALL")
     [[ -n "$UPGRADE_VERSION" ]] && iargs+=(--version "$UPGRADE_VERSION")
-    exec "$IP_ALLOWLIST_ROOT/install.sh" "${iargs[@]}"
+    "$IP_ALLOWLIST_ROOT/install.sh" "${iargs[@]}" || return 1
+    if (( UPGRADE_SYNC == 1 )); then
+      sync_after_upgrade
+    fi
+    return 0
   fi
   local repo="$REPO"
   local api="https://api.github.com/repos/${repo}/releases/latest"
@@ -1583,6 +1693,17 @@ cmd_upgrade() {
   [[ -d "$extracted" ]] || die "unexpected archive layout"
   "$extracted/install.sh" --yes || die "install failed"
   out "upgraded to $latest"
+  if (( UPGRADE_SYNC == 1 )); then
+    sync_after_upgrade
+  fi
+}
+
+# Run the freshly installed binary once (used by 'upgrade --sync').
+sync_after_upgrade() {
+  local bin="/usr/local/sbin/ip-allowlist"
+  [[ -x "$bin" ]] || bin="$IP_ALLOWLIST_ROOT/ip-allowlist"
+  out "running sync with the new version"
+  "$bin" sync || die "sync after upgrade failed"
 }
 
 cmd_install() {
@@ -1615,7 +1736,7 @@ main() {
 
   case "$COMMAND" in
     help)
-      usage
+      usage_for "${HELP_TOPIC:-help}"
       exit 0
       ;;
     version)

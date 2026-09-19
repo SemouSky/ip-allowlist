@@ -21,7 +21,7 @@ sudo ./install.sh
 | `ip-allowlist status` | 显示状态（`--json`、`--check`） |
 | `ip-allowlist cleanup` | 移除防火墙对象与 fail2ban drop-in |
 | `ip-allowlist version` | 显示版本 |
-| `ip-allowlist upgrade [--check]` | 检查/安装更新（`--check` 仅报告） |
+| `ip-allowlist upgrade [--check] [--version VER] [--from-dir DIR] [--from-tarball FILE] [--sync] [--force]` | 检查/安装更新；`--sync` 升级后立即同步 |
 | `ip-allowlist install` | 全系统安装 |
 | `ip-allowlist uninstall [--purge]` | 卸载 |
 

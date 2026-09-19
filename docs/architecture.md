@@ -189,3 +189,24 @@ allow manual rollback.
 | 3    | Status UNKNOWN |
 | 64   | Usage error |
 | 77   | Tests skipped (not a runtime code) |
+
+## Plan conformance notes
+
+Two items from the original plan are intentionally implemented differently;
+neither changes observable behaviour:
+
+- **nft update strategy**: the plan describes per-source `flush chain` +
+  element reset inside one `nft -f` transaction. The tool instead regenerates
+  the whole `inet ip_allowlist` table in one atomic `nft -f` transaction. Both
+  are atomic and leave other sources untouched; regeneration is simpler, has a
+  single code path for add/update/remove, and is covered by verification and
+  snapshot rollback.
+- **Test harness**: the plan lists `tests/bats/*.bats` and
+  `tests/docker/scenarios/*`. The tool uses `tests/unit.sh` plus
+  `tests/integration/{run,ufw,firewalld,connectivity}.sh`, driven by
+  `tests/run.sh` / `make test-unit|test-integration`, covering the same
+  behaviour (parsing, inheritance, hashing, shrink guard, all backends,
+  fail2ban, lifecycle, crash recovery, install/upgrade, connectivity).
+
+Default-deny verification is out of scope (plan non-goals) and an nftables
+`accept` is not final across base chains in different tables; see the README.

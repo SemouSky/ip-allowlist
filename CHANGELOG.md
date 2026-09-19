@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0](https://github.com/SemouSky/ip-allowlist/compare/v0.2.0...v0.3.0) (2026-09-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* require an explicit command, native uninstall, real install help
+
+### Features
+
+* require an explicit command, native uninstall, real install help ([8398cf6](https://github.com/SemouSky/ip-allowlist/commit/8398cf6e61d7e3cb4eca43b4e8f53ea4155f2d0d))
+
+
+### Bug Fixes
+
+* **config:** strip inline comments from values ([57ecd83](https://github.com/SemouSky/ip-allowlist/commit/57ecd83d077c86b9f36f25c5be876e570efb40ea))
+
 ## [0.2.0](https://github.com/SemouSky/ip-allowlist/compare/v0.1.1...v0.2.0) (2026-09-19)
 
 

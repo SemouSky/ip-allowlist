@@ -20,24 +20,17 @@ make test
 
 Run all tests:
 ```bash
-make test
+make test              # lint + unit + integration
 ```
 
-Run only lint:
+Other targets:
 ```bash
+make test-unit         # unit tests only
+make test-integration  # container integration tests
+make test-integration DISTRO=ubuntu-22.04
+make test-images       # pre-build the per-distro test images
 make lint
-```
-
-Run unit tests:
-```bash
-make unit
-```
-
-Run integration tests (requires Docker or podman):
-```bash
-make integration
-# Or specific distro:
-make integration DISTRO=ubuntu-22.04
+make hooks             # install a pre-commit hook (make lint test-unit)
 ```
 
 ## Code Style

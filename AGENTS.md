@@ -35,7 +35,8 @@ ip-allowlist is a Linux shell script for managing firewall allow-lists from Clou
 
 ## Testing
 
-- `make test` runs lint + unit + integration
+- `make test` runs lint + unit + integration (`test-unit`, `test-integration`,
+  `test-images`, `hooks` are also available)
 - Integration tests use Docker/podman with per-distro images
 - Test runner: `tests/run.sh` (auto-detects podman→docker)
 - Bats for unit tests (if available), custom for integration

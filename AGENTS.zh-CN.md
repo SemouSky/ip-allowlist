@@ -35,7 +35,7 @@ ip-allowlist 是一个 Linux Shell 脚本，用于从 Cloudflare 及其他 IP �
 
 ## 测试
 
-- `make test` 运行 lint + 单元测试 + 集成测试
+- `make test` 运行 lint + 单元测试 + 集成测试（另有 `test-unit`、`test-integration`、`test-images`、`hooks`）
 - 集成测试使用 Docker/podman 与各发行版镜像
 - 测试运行器：`tests/run.sh`（自动探测 podman→docker）
 - 单元测试使用 Bats（如果可用），集成测试为自定义实现

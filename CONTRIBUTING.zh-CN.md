@@ -20,24 +20,17 @@ make test
 
 运行全部测试：
 ```bash
-make test
+make test              # lint + 单元 + 集成
 ```
 
-仅运行 lint：
+其他目标：
 ```bash
+make test-unit         # 仅单元测试
+make test-integration  # 容器集成测试
+make test-integration DISTRO=ubuntu-22.04
+make test-images       # 预构建各发行版测试镜像
 make lint
-```
-
-运行单元测试：
-```bash
-make unit
-```
-
-运行集成测试（需要 Docker 或 podman）：
-```bash
-make integration
-# 或指定发行版：
-make integration DISTRO=ubuntu-22.04
+make hooks             # 安装 pre-commit 钩子（make lint test-unit）
 ```
 
 ## 代码风格
